@@ -1,4 +1,5 @@
 import asyncio
+import unicodedata
 from datetime import UTC, datetime
 from io import BytesIO
 
@@ -42,6 +43,7 @@ def sample():
 def test_word_contains_chinese_change_and_evidence():
     document = Document(BytesIO(reporting.render_docx(sample())))
     text = "\n".join(p.text for p in document.paragraphs)
+    text = unicodedata.normalize("NFKC", text)
     for target in [
         "中文采集报告",
         "事实",
