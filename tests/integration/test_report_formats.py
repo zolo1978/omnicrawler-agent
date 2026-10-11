@@ -62,7 +62,10 @@ def test_word_contains_chinese_change_and_evidence():
 
 def test_pdf_actual_chinese_text_and_evidence():
     data = asyncio.run(reporting.render_pdf(sample()))
-    text = "\n".join(page.extract_text() for page in PdfReader(BytesIO(data)).pages)
+    text = unicodedata.normalize(
+        "NFKC",
+        "\n".join(page.extract_text() for page in PdfReader(BytesIO(data)).pages),
+    )
     for target in [
         "中文采集报告",
         "价格监控",
