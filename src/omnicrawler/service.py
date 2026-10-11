@@ -3,7 +3,7 @@
 import asyncio
 import json
 import logging
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
@@ -32,6 +32,7 @@ class TaskService:
         self.scheduler = None
         self.worker = None
         self.stopping = False
+        self.report_root = self.store.path.parent / "reports"
         with self.store._connection() as conn:
             conn.executescript("""
                 CREATE TABLE IF NOT EXISTS tasks (
@@ -46,15 +47,27 @@ class TaskService:
                 CREATE TABLE IF NOT EXISTS alerts (
                     code TEXT PRIMARY KEY, count INTEGER NOT NULL, updated_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS report_artifacts (
+                    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+                    snapshot_id TEXT NOT NULL REFERENCES snapshots(id) ON DELETE CASCADE,
+                    PRIMARY KEY(task_id, snapshot_id)
+                );
             """)
 
-    def enqueue(self, config: CollectionConfig, key: str | None = None) -> str:
+    def enqueue(
+        self, config: CollectionConfig, key: str | None = None, *, connection=None
+    ) -> str:
         payload = json.dumps(config.model_dump(), sort_keys=True)
         identifier = str(uuid4())
-        with self.store._connection() as conn:
+        with (
+            self.store._connection()
+            if connection is None
+            else nullcontext(connection) as conn
+        ):
             # Reserve the writer before lookup so concurrent idempotent enqueues
             # cannot both observe an absent key; the context commits or rolls back.
-            conn.execute("BEGIN IMMEDIATE")
+            if connection is None:
+                conn.execute("BEGIN IMMEDIATE")
             if key:
                 row = conn.execute(
                     "SELECT id, config FROM tasks WHERE idem=?", (key,)
@@ -133,7 +146,33 @@ class TaskService:
         started = datetime.now(UTC)
         try:
             result = await collect(config, self.store)
-            self.set_status(identifier, result.status, result.model_dump(mode="json"))
+            self.set_status(identifier, "running", result.model_dump(mode="json"))
+            if self.delivery_contract(identifier):
+                try:
+                    await self.generate_report(identifier)
+                except KeyError:
+                    pass  # A concurrent authorized deletion invalidates delivery.
+                except Exception as exc:  # noqa: BLE001 — delivery failure does not reverse collection
+                    with self.store._connection() as conn:
+                        row = conn.execute(
+                            "SELECT result FROM tasks WHERE id=?", (identifier,)
+                        ).fetchone()
+                        if row and row[0]:
+                            payload = json.loads(row[0])
+                            payload["delivery"] = {
+                                "files": {},
+                                "warnings": [
+                                    f"report_delivery_failed: {type(exc).__name__}"
+                                ],
+                            }
+                            conn.execute(
+                                "UPDATE tasks SET result=? WHERE id=?",
+                                (json.dumps(payload), identifier),
+                            )
+            current = self.get(identifier)
+            self.set_status(
+                identifier, result.status, current["result"], current["error"]
+            )
             if result.status != "succeeded":
                 self.alert(result.status)
             logger.info(
@@ -176,16 +215,113 @@ class TaskService:
             ]
         return {"tasks": statuses, "active": len(self.running), "alerts": alerts}
 
-    def schedule(self, config, seconds):
+    def delivery_contract(self, identifier):
+        with self.store._connection() as conn:
+            tables = {
+                row[0]
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                )
+            }
+            if "task_deliveries" not in tables:
+                return None
+            row = conn.execute(
+                "SELECT task_type, seconds, formats FROM task_deliveries WHERE task_id=?",
+                (identifier,),
+            ).fetchone()
+        return (
+            {
+                "task_type": row[0],
+                "schedule_seconds": row[1],
+                "formats": json.loads(row[2]),
+            }
+            if row
+            else None
+        )
+
+    async def generate_report(self, identifier, *, formats=None):
+        import shutil
+        from tempfile import TemporaryDirectory
+
+        from omnicrawler.report import build_report, deliver
+
+        task = self.get(identifier)
+        if not task["result"]:
+            raise KeyError("Result unavailable or expired")
+        result = task["result"]
+        contract = self.delivery_contract(identifier) or {
+            "task_type": "once",
+            "schedule_seconds": None,
+            "formats": ["md", "json"],
+        }
+        selected = list(dict.fromkeys(contract["formats"] + list(formats or [])))
+        report = build_report(
+            self.store,
+            result,
+            task_type=contract["task_type"],
+            schedule_seconds=contract["schedule_seconds"],
+        )
+        self.report_root.mkdir(parents=True, exist_ok=True)
+        # Render outside the transaction, then validate dependencies and install
+        # under the same writer lock as deletion. No stale report is resurrected.
+        with TemporaryDirectory(prefix=".pending-", dir=self.report_root) as temporary:
+            manifest = await deliver(report, Path(temporary), selected)
+            with self.store._connection() as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                row = conn.execute(
+                    "SELECT result FROM tasks WHERE id=?", (identifier,)
+                ).fetchone()
+                current = json.loads(row[0]) if row and row[0] else None
+                dependencies = {
+                    result["snapshot_id"],
+                    result.get("previous_snapshot_id"),
+                } - {None}
+                if (
+                    current is None
+                    or current.get("snapshot_id") != result["snapshot_id"]
+                    or any(
+                        not conn.execute(
+                            "SELECT 1 FROM snapshots WHERE id=?", (snapshot,)
+                        ).fetchone()
+                        for snapshot in dependencies
+                    )
+                ):
+                    raise KeyError("Report dependencies were deleted")
+                output = self.report_root / identifier
+                shutil.rmtree(output, ignore_errors=True)
+                output.mkdir()
+                for format, path in manifest["files"].items():
+                    destination = output / f"report.{format}"
+                    Path(path).replace(destination)
+                    manifest["files"][format] = str(destination)
+                conn.execute(
+                    "DELETE FROM report_artifacts WHERE task_id=?", (identifier,)
+                )
+                conn.executemany(
+                    "INSERT INTO report_artifacts VALUES (?, ?)",
+                    [(identifier, snapshot) for snapshot in dependencies],
+                )
+                current["delivery"] = manifest
+                conn.execute(
+                    "UPDATE tasks SET result=? WHERE id=?",
+                    (json.dumps(current), identifier),
+                )
+        return manifest
+
+    def schedule(self, config, seconds, *, connection=None):
         if type(seconds) is not int or seconds < 10:
             raise ValueError("Interval must be at least 10 seconds")
         identifier = str(uuid4())
-        with self.store._connection() as conn:
+        with (
+            self.store._connection()
+            if connection is None
+            else nullcontext(connection) as conn
+        ):
             conn.execute(
                 "INSERT INTO schedules VALUES (?, ?, ?, 0)",
                 (identifier, config.model_dump_json(), seconds),
             )
-        if self.scheduler:
+        if self.scheduler and connection is None:
             self.register_schedule(identifier, seconds)
         return identifier
 
@@ -205,6 +341,7 @@ class TaskService:
 
     def trigger_schedule(self, identifier):
         with self.store._connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
                 "SELECT config, seconds, paused FROM schedules WHERE id=?",
                 (identifier,),
@@ -217,11 +354,28 @@ class TaskService:
             ).fetchone()
             if active:
                 return
-        slot = int(datetime.now(UTC).timestamp()) // row[1]
-        self.enqueue(
-            CollectionConfig.model_validate_json(row[0]),
-            f"schedule:{identifier}:{slot}",
-        )
+            slot = int(datetime.now(UTC).timestamp()) // row[1]
+            task_id = self.enqueue(
+                CollectionConfig.model_validate_json(row[0]),
+                f"schedule:{identifier}:{slot}",
+                connection=conn,
+            )
+            tables = {
+                entry[0]
+                for entry in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                )
+            }
+            if "schedule_deliveries" in tables:
+                delivery = conn.execute(
+                    "SELECT formats FROM schedule_deliveries WHERE schedule_id=?",
+                    (identifier,),
+                ).fetchone()
+                if delivery:
+                    conn.execute(
+                        "INSERT OR IGNORE INTO task_deliveries VALUES (?, 'monitor', ?, ?)",
+                        (task_id, row[1], delivery[0]),
+                    )
 
     def register_schedule(self, identifier, seconds):
         self.scheduler.add_job(

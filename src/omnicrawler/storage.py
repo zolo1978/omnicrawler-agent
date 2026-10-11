@@ -129,6 +129,18 @@ class SnapshotStore:
 
     def delete(self, snapshot_id: str) -> None:
         with self._connection() as conn:
+            tables = {
+                row[0]
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                )
+            }
+            if "report_artifacts" in tables:
+                for (identifier,) in conn.execute(
+                    "SELECT task_id FROM report_artifacts WHERE snapshot_id=?",
+                    (snapshot_id,),
+                ).fetchall():
+                    self._delete_report_files(identifier)
             conn.execute(
                 "DELETE FROM events WHERE old_id=? OR new_id=?",
                 (snapshot_id, snapshot_id),
@@ -154,6 +166,21 @@ class SnapshotStore:
                             "UPDATE tasks SET result=NULL, error='expired_or_deleted' WHERE id=?",
                             (identifier,),
                         )
+                        self._delete_report_files(identifier)
+
+    def _delete_report_files(self, identifier):
+        import shutil
+        from uuid import UUID
+
+        try:
+            UUID(identifier)
+        except ValueError:
+            return
+        directory = self.path.parent / "reports" / identifier
+        if directory.exists():
+            # Propagate filesystem failure so the surrounding DB transaction
+            # rolls back and the caller can retry instead of claiming deletion.
+            shutil.rmtree(directory)
 
     def cleanup(self, retention_days: int = 90) -> int:
         from datetime import UTC, datetime, timedelta
@@ -170,7 +197,47 @@ class SnapshotStore:
         ]
         for identifier in expired:
             self.delete(identifier)
+        self._clear_previews(cutoff=cutoff)
         return len(expired)
+
+    def _clear_previews(self, *, entity_id=None, source_url=None, cutoff=None):
+        from datetime import datetime
+
+        with self._connection() as conn:
+            if not conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE name='guidance_sessions'"
+            ).fetchone():
+                return
+            rows = conn.execute(
+                "SELECT id, answers, preview, confirmation, created_at FROM guidance_sessions"
+            ).fetchall()
+            for identifier, answers_raw, preview_raw, confirmation, created_at in rows:
+                answers = json.loads(answers_raw)
+                preview = json.loads(preview_raw) if preview_raw else {}
+                source_match = source_url is not None and (
+                    source_url in answers.get("source", [])
+                    or source_url == preview.get("source_url")
+                    or any(
+                        source_url == proof.get("url")
+                        for sample in preview.get("samples", [])
+                        for proof in sample.get("evidence", {}).values()
+                    )
+                )
+                entity_match = entity_id is not None and any(
+                    sample.get("entity_id") == entity_id
+                    for sample in preview.get("samples", [])
+                )
+                expired = (
+                    cutoff is not None
+                    and preview_raw is not None
+                    and datetime.fromisoformat(preview.get("captured_at", created_at))
+                    < cutoff
+                )
+                if source_match or entity_match or expired:
+                    conn.execute(
+                        "UPDATE guidance_sessions SET preview=NULL, revision=revision+? WHERE id=?",
+                        (0 if confirmation else 1, identifier),
+                    )
 
     def traced_events(self) -> list[dict]:
         with self._connection() as conn:
@@ -238,4 +305,5 @@ class SnapshotStore:
                 matches.append(identifier)
         for identifier in matches:
             self.delete(identifier)
+        self._clear_previews(entity_id=entity_id, source_url=source_url)
         return len(matches)

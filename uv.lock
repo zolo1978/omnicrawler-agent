@@ -1201,6 +1201,7 @@ dependencies = [
     { name = "mcp" },
     { name = "playwright" },
     { name = "pydantic" },
+    { name = "python-docx" },
     { name = "uvicorn" },
 ]
 
@@ -1212,6 +1213,7 @@ crawl4ai = [
 [package.dev-dependencies]
 dev = [
     { name = "httpx" },
+    { name = "pypdf" },
     { name = "pytest" },
     { name = "ruff" },
 ]
@@ -1226,6 +1228,7 @@ requires-dist = [
     { name = "mcp", specifier = ">=1.10,<2" },
     { name = "playwright", specifier = ">=1.49,<2" },
     { name = "pydantic", specifier = ">=2.10,<3" },
+    { name = "python-docx", specifier = ">=1.2,<2" },
     { name = "uvicorn", specifier = ">=0.30,<1" },
 ]
 provides-extras = ["crawl4ai"]
@@ -1233,6 +1236,7 @@ provides-extras = ["crawl4ai"]
 [package.metadata.requires-dev]
 dev = [
     { name = "httpx", specifier = ">=0.27,<1" },
+    { name = "pypdf", specifier = ">=6,<7" },
     { name = "pytest", specifier = ">=8,<10" },
     { name = "ruff", specifier = ">=0.9,<1" },
 ]
@@ -1560,6 +1564,15 @@ wheels = [
 ]
 
 [[package]]
+name = "pypdf"
+version = "6.20.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/45/7e/d08c72b29e89b1ad14acaae817685ca06bac93691bddfd4fac08a703e5b0/pypdf-6.20.0.tar.gz", hash = "sha256:72b1e897fef7f5bbed7f2a93881a4861d98dbf25ae39981c8a023583239edbda", size = 7072602, upload-time = "2026-10-09T10:49:39.165Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/18/42/a945f65cc61c739ec80f4112c4b78ed1791f25d33f45f19389c9c9e247e2/pypdf-6.20.0-py3-none-any.whl", hash = "sha256:f003fc2014814d264fe7dd3f9d435c158e23e1a85a2233f87a0a2d6d21c914ad", size = 401710, upload-time = "2026-10-09T10:49:36.882Z" },
+]
+
+[[package]]
 name = "pytest"
 version = "9.1.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1573,6 +1586,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/e4/47/b9efed96c114afcfa3c9d3fe98a76a1d14c74a9e266d397cf6eb64be5e01/pytest-9.1.1.tar.gz", hash = "sha256:1088fbde8f2b49d95a549a195707afa7a76a3ce9bcadc26b6d71f0ffda5fe313", size = 1636369, upload-time = "2026-06-19T10:58:32.857Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/24/25/1de2678b631f5a49215c6c96fff41ba892b0a34df68d6d80292b1b48aa7f/pytest-9.1.1-py3-none-any.whl", hash = "sha256:37a86b45efb9a47a61a36449063e8e18d0cab3161329fc099eb21783169c4f0c", size = 386536, upload-time = "2026-06-19T10:58:31.347Z" },
+]
+
+[[package]]
+name = "python-docx"
+version = "1.2.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "lxml" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a9/f7/eddfe33871520adab45aaa1a71f0402a2252050c14c7e3009446c8f4701c/python_docx-1.2.0.tar.gz", hash = "sha256:7bc9d7b7d8a69c9c02ca09216118c86552704edc23bac179283f2e38f86220ce", size = 5723256, upload-time = "2025-06-16T20:46:27.921Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d0/00/1e03a4989fa5795da308cd774f05b704ace555a70f9bf9d3be057b680bcf/python_docx-1.2.0-py3-none-any.whl", hash = "sha256:3fd478f3250fbbbfd3b94fe1e985955737c145627498896a8a6bf81f4baf66c7", size = 252987, upload-time = "2025-06-16T20:46:22.506Z" },
 ]
 
 [[package]]

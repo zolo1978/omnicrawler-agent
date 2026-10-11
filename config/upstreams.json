@@ -159,6 +159,21 @@
         "external/upstream/splash/LICENSE"
       ],
       "license_review": "root_text_reviewed; transitive and directory-level review pending"
+    },
+    {
+      "name": "python-docx",
+      "source_url": "https://github.com/python-openxml/python-docx",
+      "package_url": "https://pypi.org/project/python-docx/1.2.0/",
+      "ref": "1.2.0",
+      "commit": null,
+      "license": "MIT",
+      "download_status": "installed_package",
+      "integration_stage": "reporting",
+      "checked_at": "2026-10-11T13:42:33.001794+00:00",
+      "license_files": [
+        "python_docx-1.2.0.dist-info/licenses/LICENSE"
+      ],
+      "license_review": "installed package MIT LICENSE text reviewed; transitive review pending"
     }
   ]
 }

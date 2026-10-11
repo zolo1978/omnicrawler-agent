@@ -6,12 +6,15 @@ import secrets
 import sqlite3
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Response
 from pydantic import BaseModel, Field
 
 from omnicrawler.pipeline import CollectionConfig, select_engine
+from omnicrawler.provider import provider_from_env
 from omnicrawler.service import TaskService, worker_lock
+from omnicrawler.session import SessionStore
 
 
 class DeleteScope(BaseModel):
@@ -24,11 +27,25 @@ class ScheduleRequest(BaseModel):
     seconds: int = Field(ge=10, strict=True)
 
 
+class SessionAnswer(BaseModel):
+    answers: dict
+
+
+class Confirmation(BaseModel):
+    revision: int = Field(ge=0, strict=True)
+
+
 def create_app(path: Path, api_key: str, *, allowed_hosts=(), local_origins=()):
     if not api_key:
         raise ValueError("API key is required")
     manager = TaskService(path)
     allowed_hosts, local_origins = set(allowed_hosts), set(local_origins)
+    sessions = SessionStore(
+        manager,
+        allowed_hosts=allowed_hosts,
+        local_origins=local_origins,
+        provider=provider_from_env(),
+    )
 
     @asynccontextmanager
     async def lifespan(app):
@@ -54,6 +71,82 @@ def create_app(path: Path, api_key: str, *, allowed_hosts=(), local_origins=()):
     app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     app.state.manager = manager
     secured = [Depends(authenticate)]
+
+    def guidance_error(exc):
+        if isinstance(exc, KeyError):
+            raise HTTPException(404, "Unknown session or expired result") from None
+        if "authorization" in str(exc):
+            raise HTTPException(
+                403, "Source policy exceeds server authorization"
+            ) from None
+        raise HTTPException(
+            409, "Invalid answer, unresolved draft, or changed revision"
+        ) from None
+
+    @app.post("/sessions", dependencies=secured, status_code=201)
+    def start_session():
+        return sessions.start()
+
+    @app.get("/sessions/{identifier}", dependencies=secured)
+    def get_session(identifier: str):
+        try:
+            return sessions.get(identifier)
+        except (KeyError, ValueError) as exc:
+            guidance_error(exc)
+
+    @app.post("/sessions/{identifier}/answer", dependencies=secured)
+    def answer_session(identifier: str, request: SessionAnswer):
+        try:
+            return sessions.answer(identifier, request.answers)
+        except (KeyError, ValueError) as exc:
+            guidance_error(exc)
+
+    @app.get("/sessions/{identifier}/draft", dependencies=secured)
+    def get_draft(identifier: str):
+        return get_session(identifier)["draft"]
+
+    @app.post("/sessions/{identifier}/preview", dependencies=secured)
+    async def preview_session(identifier: str):
+        try:
+            return await sessions.preview(identifier)
+        except (KeyError, ValueError) as exc:
+            guidance_error(exc)
+
+    @app.post("/sessions/{identifier}/confirm", dependencies=secured)
+    def confirm_session(identifier: str, request: Confirmation):
+        try:
+            return sessions.confirm(identifier, request.revision, actor="api-key-owner")
+        except (KeyError, ValueError) as exc:
+            guidance_error(exc)
+
+    @app.get("/tasks/{identifier}/report", dependencies=secured)
+    async def task_report(
+        identifier: str, format: Literal["md", "docx", "pdf", "json"] = "md"
+    ):
+        try:
+            task(identifier)
+            manifest = await manager.generate_report(identifier, formats=[format])
+        except KeyError:
+            raise HTTPException(409, "Report unavailable or expired") from None
+        if format not in manifest["files"]:
+            raise HTTPException(
+                503,
+                {
+                    "message": "Requested format unavailable",
+                    "warnings": manifest["warnings"],
+                },
+            )
+        types = {
+            "md": "text/markdown",
+            "json": "application/json",
+            "pdf": "application/pdf",
+            "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        }
+        return Response(
+            Path(manifest["files"][format]).read_bytes(),
+            media_type=types[format],
+            headers={"Content-Disposition": f'attachment; filename="report.{format}"'},
+        )
 
     @app.get("/health/live")
     def live():

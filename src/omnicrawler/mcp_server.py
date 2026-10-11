@@ -6,11 +6,16 @@ from pathlib import Path
 from mcp.server.fastmcp import FastMCP
 
 from omnicrawler.pipeline import CollectionConfig
+from omnicrawler.provider import provider_from_env
 from omnicrawler.service import TaskService, worker_lock
+from omnicrawler.session import SessionStore
 
 
 def build_server(path: Path, allowed_hosts: set[str]):
     manager = TaskService(path)
+    sessions = SessionStore(
+        manager, allowed_hosts=allowed_hosts, provider=provider_from_env()
+    )
 
     @asynccontextmanager
     async def lifespan(server):
@@ -22,6 +27,38 @@ def build_server(path: Path, allowed_hosts: set[str]):
                 await manager.stop()
 
     server = FastMCP("OmniCrawler", lifespan=lifespan)
+
+    @server.tool()
+    def start_session() -> dict:
+        """Start recoverable guidance; first choose once or monitor."""
+        return sessions.start()
+
+    @server.tool()
+    def answer_questions(session_id: str, answers: dict) -> dict:
+        """Answer a partial questionnaire; scope/selector proposals need confirmation."""
+        return sessions.answer(session_id, answers)
+
+    @server.tool()
+    def get_draft(session_id: str) -> dict:
+        """Read draft and revision; unknowns must be resolved before confirmation."""
+        return sessions.get(session_id)
+
+    @server.tool()
+    async def preview_session(session_id: str) -> dict:
+        """Sample one explicitly authorized source using the existing access policy."""
+        return await sessions.preview(session_id)
+
+    @server.tool()
+    def confirm_session(session_id: str, revision: int) -> dict:
+        """Authorize this exact reviewed draft revision; creates task or monitor."""
+        return sessions.confirm(session_id, revision, actor="local-mcp-client")
+
+    @server.tool()
+    async def task_report(task_id: str, format: str = "md") -> dict:
+        """Deliver a completed evidence report, with explicit format warnings."""
+        if format not in {"md", "docx", "pdf", "json"}:
+            raise ValueError("Unsupported report format")
+        return await manager.generate_report(task_id, formats=[format])
 
     @server.tool()
     def create_task(config: dict, idempotency_key: str | None = None) -> dict:

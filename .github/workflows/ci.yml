@@ -8,6 +8,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
+      - run: sudo apt-get update && sudo apt-get install -y fonts-noto-cjk
       - run: uv sync --locked --extra crawl4ai --python 3.12
       - run: PLAYWRIGHT_BROWSERS_PATH="$PWD/.browser-cache" uv run --extra crawl4ai playwright install --with-deps chromium
       - name: Allow Chromium sandbox user namespaces

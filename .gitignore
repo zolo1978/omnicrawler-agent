@@ -35,3 +35,6 @@ exports/
 /10个GitHub仓库，免费爬取整个互联网.md
 /docs/references/*.md
 !/docs/references/README.md
+
+# Also ignore a shared browser-cache symlink in isolated worktrees
+.browser-cache

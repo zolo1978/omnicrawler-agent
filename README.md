@@ -26,7 +26,7 @@
 
 同一份商品列表，今天价格变了、明天新增条目、后天下架。OmniCrawler 把指定来源整理成结构化记录，为每个字段保存 URL、时间和定位证据，再对可比的完整快照检测变化。你可以追问“哪里变了”，也可以核对“根据什么”。
 
-适用于授权网页的目录监控、公开信息追踪和规则采集。当前首版需要明确 URL、字段及 CSS 定位；真实 LLM/搜索服务尚未接入。
+适用于授权网页的目录监控、公开信息追踪和规则采集。当前首版需要明确 URL、字段及 CSS 定位；新增五步引导和自配 JSON provider；未配置时使用确定性采样建议，搜索服务尚未接入。
 
 ## 已实现的能力
 
@@ -36,7 +36,8 @@
 | 来源证据 | 字段关联 URL、时间、定位和最小片段；保留多来源冲突 |
 | 变化检测 | 新增、修改、删除；只有覆盖范围可比的完整快照才推断删除 |
 | 持续运行 | SQLite 持久化、APScheduler 计划、暂停/恢复、幂等提交与取消 |
-| 多种入口 | CLI、带 API Key 的本地 REST、MCP stdio |
+| 引导与入口 | 一次性/长期问卷、采样提案、版本确认；CLI、API Key REST、MCP stdio |
+| 多格式交付 | 统一证据报告输出 Markdown、Word、PDF、JSON；缺失字体/依赖时明确降级 |
 | 留存清理 | 结构化数据默认 90 天；启动及每日清理；按实体或来源删除 |
 
 ## 工作方式
@@ -89,6 +90,17 @@ uv run --extra crawl4ai omnicrawler collect examples/collection.json --db data/a
 
 示例中的 `example.com` 是占位来源，需替换。REST、MCP 和定时计划的配置见 [运行文档](docs/usage.md)。
 
+## 引导采集与报告
+
+```sh
+uv run --extra crawl4ai omnicrawler guide --allow-host example.com
+# 中断后恢复：增加 --session-id <会话ID>，使用同一数据库
+```
+
+向导先区分一次性采集与长期监控，再询问目标、URL、字段与范围。采样提案需主动接受，草案需最终确认；未知项未解决时不能执行。长期监控立即交付基线，持续运行需启动同一数据库的 REST/MCP worker。
+
+报告包含来源、字段证据、冲突观察、事实/推断分区与前后变化。PDF 使用离线 Chromium 和 CJK 字体；Linux 安装 `fonts-noto-cjk`。配置 provider、会话 REST/MCP 和导出示例见 [引导与报告说明](docs/guided-and-reporting.md)。
+
 ## 验证与开发
 
 ```sh
@@ -102,7 +114,7 @@ uv build
 
 ## 路线图与贡献
 
-下一阶段重点是实际 LLM/搜索配置、受控来源发现、文档解析和规模化适配。候选工具源码已获取作本地研究，出现在清单中不代表已经接入。
+下一阶段重点是搜索服务、更多采样建议、文档解析和规模化适配。候选工具源码已获取作本地研究，出现在清单中不代表已经接入。
 
 - [项目规划](docs/plans/2026-10-11-omnicrawler-roadmap.md)
 - [执行记录](docs/plans/2026-10-11-foundation-execution.md)

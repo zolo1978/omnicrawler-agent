@@ -71,29 +71,21 @@ async def run_demo(output: Path) -> dict:
     (output / "report.json").write_text(
         json.dumps(report, ensure_ascii=False, indent=2) + "\n"
     )
-    lines = [
-        "# OmniCrawler 端到端演示",
-        "",
-        "使用本地授权测试站点；未访问外部网站。",
-        "",
-        "| 采集 | 状态 | 变化 |",
-        "|---|---|---|",
-    ]
     for index, run in enumerate(runs, 1):
-        changes = (
-            ", ".join(
-                f"{change['kind']} {change['entity_id']}" for change in run["changes"]
-            )
-            or "建立基线"
+        from omnicrawler.report import build_report, deliver, render_markdown
+
+        canonical = build_report(
+            store, run, task_type="monitor", title=f"OmniCrawler 演示：采集 {index}"
         )
-        lines.append(f"| {index} | {run['status']} | {changes} |")
+        await deliver(
+            canonical, output / "reports" / f"run-{index}", formats=["md", "json"]
+        )
         (output / f"snapshot-{index}.json").write_text(
             json.dumps(store.bundle(run["snapshot_id"]), ensure_ascii=False, indent=2)
             + "\n"
         )
-    lines += [
-        "",
-        "每个 snapshot JSON 含字段值、来源 URL、时间、定位表达式和证据片段。事实为采集字段及变化；本演示没有生成市场推断。",
-    ]
-    (output / "report.md").write_text("\n".join(lines) + "\n")
+    canonical.facts.append(
+        "本地授权演示连续采集三次，变化数量为 0 / 2 / 1；机器执行记录见 report.json，逐次规范报告见 reports/run-1 至 run-3。"
+    )
+    (output / "report.md").write_text(render_markdown(canonical))
     return report
