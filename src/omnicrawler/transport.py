@@ -49,6 +49,12 @@ class Page:
 
 
 class SafeFetcher:
+    """One instance per serial collection; do not share across concurrent fetches.
+
+    scheme feeds the connection resolver and last enforces per-host spacing.
+    Parallel collection requires per-connection scheme and synchronized throttling.
+    """
+
     def __init__(
         self,
         allowed_hosts,

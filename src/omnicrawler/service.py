@@ -52,6 +52,8 @@ class TaskService:
         payload = json.dumps(config.model_dump(), sort_keys=True)
         identifier = str(uuid4())
         with self.store._connection() as conn:
+            # Reserve the writer before lookup so concurrent idempotent enqueues
+            # cannot both observe an absent key; the context commits or rolls back.
             conn.execute("BEGIN IMMEDIATE")
             if key:
                 row = conn.execute(

@@ -64,18 +64,6 @@ def test_policy_checks_all_dns_addresses_and_exact_allowlist():
             guard.validate_url(url, addresses)
 
 
-def test_redirect_target_is_revalidated():
-    guard = policy.AccessPolicy({"example.com"})
-    with pytest.raises(policy.AccessDenied):
-        guard.validate_redirect(
-            "https://example.com/p", "http://127.0.0.1/private", ["127.0.0.1"]
-        )
-    assert (
-        guard.validate_redirect("https://example.com/p", "/next", ["93.184.216.34"])
-        == "https://example.com/next"
-    )
-
-
 def test_robots_denial_and_unavailable_are_fail_closed():
     guard = policy.AccessPolicy({"example.com"})
     assert guard.robots_allowed(

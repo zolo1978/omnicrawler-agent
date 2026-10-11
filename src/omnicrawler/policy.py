@@ -4,7 +4,7 @@ This module does not fetch URLs: preflight alone cannot prevent DNS rebinding.
 """
 
 from ipaddress import ip_address
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import urlsplit
 from urllib.robotparser import RobotFileParser
 
 
@@ -53,13 +53,6 @@ class AccessPolicy:
             return host
         except (ValueError, UnicodeError) as exc:
             raise AccessDenied(str(exc)) from exc
-
-    def validate_redirect(
-        self, current: str, location: str, addresses: list[str]
-    ) -> str:
-        target = urljoin(current, location)
-        self.validate_url(target, addresses)
-        return target
 
     def robots_allowed(self, url: str, content: str | None) -> bool:
         if content is None:

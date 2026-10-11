@@ -1,22 +1,114 @@
-# OmniCrawler Agent
+<p align="center">
+  <img src="docs/assets/hero.png" alt="OmniCrawler Agent — Collect. Trace. Compare." width="100%" />
+</p>
 
-可本地运行的数据采集、来源证据和变化监控首版。支持受控 HTTP 获取、Crawl4AI 内容解析、Playwright 内联脚本渲染、HTML 字段抽取、SQLite 快照及差异、定时计划、REST 与 MCP stdio。
+<p align="center">
+  <strong>采集有边界 · 字段有来源 · 变化有证据</strong><br />
+  本地优先的数据采集、证据追踪与变化监控 Agent
+</p>
+
+<p align="center">
+  <a href="https://github.com/zolo1978/omnicrawler-agent/actions/workflows/ci.yml"><img src="https://github.com/zolo1978/omnicrawler-agent/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="Apache-2.0" /></a>
+  <img src="https://img.shields.io/badge/Python-3.12%E2%80%933.13-3776AB.svg" alt="Python 3.12–3.13" />
+  <img src="https://img.shields.io/badge/Stage-Local_MVP-14b8a6.svg" alt="Local MVP" />
+</p>
+
+<p align="center">
+  <a href="#快速开始">快速开始</a> ·
+  <a href="#工作方式">架构</a> ·
+  <a href="docs/usage.md">使用文档</a> ·
+  <a href="docs/plans/2026-10-11-omnicrawler-roadmap.md">路线图</a> ·
+  <a href="CONTRIBUTING.md">参与贡献</a>
+</p>
+
+## 为什么做 OmniCrawler？
+
+同一份商品列表，今天价格变了、明天新增条目、后天下架。OmniCrawler 把指定来源整理成结构化记录，为每个字段保存 URL、时间和定位证据，再对可比的完整快照检测变化。你可以追问“哪里变了”，也可以核对“根据什么”。
+
+适用于授权网页的目录监控、公开信息追踪和规则采集。当前首版需要明确 URL、字段及 CSS 定位；真实 LLM/搜索服务尚未接入。
+
+## 已实现的能力
+
+| 能力 | 当前行为 |
+| --- | --- |
+| 受控采集 | 精确域名范围、DNS/重定向检查、robots、限速及响应预算；拒绝访问后停止 |
+| 来源证据 | 字段关联 URL、时间、定位和最小片段；保留多来源冲突 |
+| 变化检测 | 新增、修改、删除；只有覆盖范围可比的完整快照才推断删除 |
+| 持续运行 | SQLite 持久化、APScheduler 计划、暂停/恢复、幂等提交与取消 |
+| 多种入口 | CLI、带 API Key 的本地 REST、MCP stdio |
+| 留存清理 | 结构化数据默认 90 天；启动及每日清理；按实体或来源删除 |
+
+## 工作方式
+
+```mermaid
+flowchart LR
+    A[明确 URL / 字段 / 定位] --> B[授权范围与访问策略]
+    B --> C[受控 HTTP 获取]
+    C --> D{内容处理路径}
+    D --> E[HTML / Crawl4AI 解析验证]
+    D --> F[Playwright 离线内联渲染]
+    E --> G[CSS 字段抽取 + 来源证据]
+    F --> G
+    G --> H[(SQLite 快照)]
+    H --> I[完整且覆盖范围可比]
+    I --> J[新增 / 修改 / 删除 + 前后证据]
+    J --> K[CLI · REST · MCP]
+    style B fill:#123047,stroke:#38bdf8,color:#e2e8f0
+    style H fill:#123047,stroke:#2dd4bf,color:#e2e8f0
+    style J fill:#123047,stroke:#2dd4bf,color:#e2e8f0
+```
+
+Crawl4AI 当前是 **HTML 字段抽取加解析验证**，不承担 LLM 语义抽取。Playwright 当前支持受限内联脚本，网络依赖型 SPA、登录和验证码流程尚未支持。详细边界见 [使用说明](docs/usage.md)。
+
+## 快速开始
+
+需要 Python 3.12 或 3.13，以及 uv。本地主要在 macOS ARM64 / Python 3.12 验证；服务 worker 锁面向 macOS/Linux。
 
 ```sh
+git clone https://github.com/zolo1978/omnicrawler-agent.git
+cd omnicrawler-agent
 uv sync --locked --extra crawl4ai --python 3.12
 PLAYWRIGHT_BROWSERS_PATH="$PWD/.browser-cache" uv run --extra crawl4ai playwright install chromium
 uv run --extra crawl4ai omnicrawler demo --output data/demo
-uv run --extra crawl4ai pytest -q
 ```
 
-演示连续采集本地授权站点，验证新增、改价与删除，输出带来源证据的快照和报告。实际网站必须明确授权范围、URL 和字段定位；本版未接入真实 LLM/搜索服务，不能只凭一句话完成全网调研。
+演示启动临时本地 HTTP 站点并连续采集三次；报告输出到 `data/demo/report.md`。它不访问外部业务网站。
 
-- [运行文档与能力边界](docs/usage.md)
-- [示例配置](examples/collection.json)
+| 快照 | 站点状态 | 检测结果 |
+| --- | --- | --- |
+| ① 基线 | A：79，B：20 | 建立基线 |
+| ② 更新 | A：89，B：20，C：129 | A 改价、C 新增 |
+| ③ 更新 | A：89，C：129 | B 删除 |
+
+采集授权来源时，复制 [示例配置](examples/collection.json)，填写实际 URL、域名与字段定位后执行：
+
+```sh
+uv run --extra crawl4ai omnicrawler collect examples/collection.json --db data/agent.sqlite
+```
+
+示例中的 `example.com` 是占位来源，需替换。REST、MCP 和定时计划的配置见 [运行文档](docs/usage.md)。
+
+## 验证与开发
+
+```sh
+uv run --extra crawl4ai pytest -q
+uv run --extra crawl4ai ruff check src tests
+uv run --extra crawl4ai ruff format --check src tests
+uv build
+```
+
+测试覆盖真实本地 HTTP、三个处理模式、REST worker、MCP stdio 握手、访问拒绝、快照差异、调度及删除。CI 徽章反映 GitHub Actions 的实际状态；本地验证与尚未实证的范围见 [验证记录](docs/validation/2026-10-11.md)。
+
+## 路线图与贡献
+
+下一阶段重点是实际 LLM/搜索配置、受控来源发现、文档解析和规模化适配。候选工具源码已获取作本地研究，出现在清单中不代表已经接入。
+
 - [项目规划](docs/plans/2026-10-11-omnicrawler-roadmap.md)
 - [执行记录](docs/plans/2026-10-11-foundation-execution.md)
-- [许可证决策](docs/adr/0001-licensing.md)
-- [参考素材说明](docs/references/README.md)
-- [贡献流程](CONTRIBUTING.md)
+- [贡献指南](CONTRIBUTING.md)
+- [第三方依赖](docs/third-party-dependencies.md)
 
-GitHub 开源仓库：[zolo1978/omnicrawler-agent](https://github.com/zolo1978/omnicrawler-agent)。原创代码和文档采用 [Apache-2.0](LICENSE)，版权声明见 [NOTICE](NOTICE)，第三方依赖说明见 [依赖清单](docs/third-party-dependencies.md)。上游组件及参考材料保留各自许可或权利。源码研究副本位于被忽略的 external/upstream/，版本记录见 config/upstreams.json。第三方参考原稿、归档副本、采集数据及本地工具状态不纳入 Git 提交，构建包不包含这些副本。
+## 许可证
+
+原创代码与文档采用 [Apache-2.0](LICENSE)，项目声明见 [NOTICE](NOTICE)。第三方依赖保留各自许可；参考原稿、上游研究源码、采集数据、凭据和浏览器缓存均不纳入仓库。

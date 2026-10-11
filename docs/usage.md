@@ -24,6 +24,8 @@
 
 engine=auto：有 ready_selector 使用 Playwright；否则安装 Crawl4AI 时使用其内容解析，没有该可选依赖时使用 HTML 解析。显式 html/playwright/crawl4ai 可固定执行路径；访问拒绝不触发换引擎。Crawl4AI 本版用于解析已经受控获取的内容，结构化 CSS 抽取仍来自原始 HTML，以保留属性与证据定位。
 
+当前 crawl4ai 路径相当于 HTML 字段抽取加 Crawl4AI 解析验证；cleaned_html 用于处理内容哈希，不承担字段语义抽取。本版不提供 Crawl4AI 的 LLM 语义抽取能力。
+
 Playwright 本版只渲染已获取 HTML 中的内联脚本；浏览器断网、阻断 HTTP/WebSocket、禁用 WebRTC 与 Service Worker。需要外部 JS/API 的 SPA 不支持；这类任务标记失败或 partial，而不开放任意浏览器网络。没有实现登录凭据托管、验证码绕过或代理轮换。
 
 discovery 可设置 links/sitemap/rss；seed URL 指向链接页、站点地图或 RSS，发现候选仍限于白名单。只做一层发现，达到预算截断时标记不完整，不能推断删除。使用同一数据库与相同配置建立可比历史；配置范围改变会建立新基线。

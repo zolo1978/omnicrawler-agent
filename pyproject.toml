@@ -43,7 +43,7 @@ target-version = "py312"
 packages = ["src/omnicrawler"]
 
 [tool.hatch.build.targets.sdist]
-include = ["/src", "/tests", "/pyproject.toml", "/README.md", "/LICENSE", "/NOTICE", "/uv.lock", "/examples", "/docs/usage.md", "/docs/third-party-dependencies.md"]
+include = ["/src", "/tests", "/pyproject.toml", "/README.md", "/LICENSE", "/NOTICE", "/uv.lock", "/examples", "/docs/assets", "/docs/usage.md", "/docs/third-party-dependencies.md"]
 
 [project.scripts]
 omnicrawler = "omnicrawler.cli:main"
