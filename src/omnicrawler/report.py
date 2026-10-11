@@ -177,6 +177,63 @@ def build_report(
     )
 
 
+_LABELS = {
+    "records": "记录数",
+    "added": "新增",
+    "modified": "变化",
+    "removed": "下架",
+    "entity_id": "对象",
+    "fields": "字段",
+    "evidence": "来源依据",
+    "url": "来源",
+    "locator": "页面位置",
+    "captured_at": "采集时间",
+    "excerpt": "摘录",
+    "price": "价格",
+    "currency": "币种",
+    "name": "名称",
+    "category": "品类",
+    "player": "球员或角色",
+    "year": "年份",
+    "set": "系列",
+    "grade": "评级",
+    "price_type": "价格口径",
+    "before": "变更前",
+    "after": "变更后",
+    "kind": "变更类型",
+    "status": "状态",
+    "observations": "来源观测",
+    "value": "值",
+    "topic": "主题",
+    "date": "日期",
+    "summary": "摘要",
+    "metric_scope": "统计口径",
+    "confidence": "可信度",
+    "method": "核查方式",
+    "primary_sources": "原始来源数",
+    "simulated_cards": "模拟卡片数",
+    "pages": "页面数",
+    "simulation_verified": "模拟验证",
+    "real_transaction_samples": "真实成交样本数",
+}
+DETAIL_LIMIT = 20
+
+
+def _readable(value, depth=0):
+    if isinstance(value, dict):
+        return "；".join(
+            f"{_LABELS.get(key, key)}：{_readable(item, depth + 1)}"
+            for key, item in value.items()
+        )
+    if isinstance(value, list):
+        return " / ".join(_readable(item, depth + 1) for item in value)
+    if value is None:
+        return "未提供"
+    if isinstance(value, bool):
+        return "是" if value else "否"
+    return str(value)
+
+
 def _lines(report: Report) -> list[tuple[str, str]]:
     data = _clean(report.model_dump(mode="json"))
     lines = [
@@ -188,7 +245,7 @@ def _lines(report: Report) -> list[tuple[str, str]]:
             f"任务类型：{data['task_type']}；状态：{data['status']}；周期：{data['schedule_seconds']}",
         ),
         ("heading", "汇总"),
-        ("text", json.dumps(data["summary"], ensure_ascii=False)),
+        ("text", _readable(data["summary"])),
         ("heading", "事实"),
     ]
     lines.extend(("text", fact) for fact in data["facts"])
@@ -199,16 +256,33 @@ def _lines(report: Report) -> list[tuple[str, str]]:
     lines.append(("heading", "记录与证据"))
     if not data["records"]:
         lines.append(("text", "无记录。"))
-    for record in data["records"]:
-        lines.append(("text", json.dumps(record, ensure_ascii=False, indent=2)))
+    for record in data["records"][:DETAIL_LIMIT]:
+        lines.append(("text", _readable(record)))
+    if len(data["records"]) > DETAIL_LIMIT:
+        lines.append(
+            (
+                "text",
+                f"正文展示前 {DETAIL_LIMIT} 条，共 {len(data['records'])} 条；完整记录与证据见 JSON 数据文件。",
+            )
+        )
     lines.append(("heading", "变化：before → after 与证据"))
-    for change in data["changes"]:
-        lines.append(("text", json.dumps(change, ensure_ascii=False, indent=2)))
+    for change in data["changes"][:DETAIL_LIMIT]:
+        visible = {key: value for key, value in change.items() if key != "evidence"}
+        lines.append(("text", _readable(visible)))
+    if data["changes"]:
+        lines.append(
+            (
+                "text",
+                f"共 {len(data['changes'])} 条变化；完整前后记录与逐字段证据见 JSON 数据文件。",
+            )
+        )
     if not data["changes"]:
         lines.append(("text", "无变化事件；首个快照或不完整范围不能推断删除。"))
     lines.append(("heading", "字段观测与冲突证据"))
-    for claim in data["claims"]:
-        lines.append(("text", json.dumps(claim, ensure_ascii=False, indent=2)))
+    for claim in data["claims"][:DETAIL_LIMIT]:
+        lines.append(("text", _readable(claim)))
+    if len(data["claims"]) > DETAIL_LIMIT:
+        lines.append(("text", "其余来源观测与冲突证据见 JSON 数据文件。"))
     lines.append(("heading", "来源"))
     lines.extend(("text", source) for source in data["sources"])
     return lines
@@ -246,7 +320,7 @@ def render_docx(report: Report) -> bytes:
     cleaned = _clean(report.model_dump(mode="json"))
     for key, value in cleaned["summary"].items():
         cells = summary.add_row().cells
-        cells[0].text, cells[1].text = str(key), str(value)
+        cells[0].text, cells[1].text = _LABELS.get(key, key), _readable(value)
     if cleaned["records"]:
         records = document.add_table(rows=1, cols=3)
         records.style = "Table Grid"
@@ -256,11 +330,11 @@ def render_docx(report: Report) -> bytes:
             strict=True,
         ):
             cell.text = label
-        for record in cleaned["records"]:
+        for record in cleaned["records"][:DETAIL_LIMIT]:
             cells = records.add_row().cells
             cells[0].text = str(record.get("entity_id", ""))
-            cells[1].text = json.dumps(record.get("fields", {}), ensure_ascii=False)
-            cells[2].text = json.dumps(record.get("evidence", {}), ensure_ascii=False)
+            cells[1].text = _readable(record.get("fields", {}))
+            cells[2].text = _readable(record.get("evidence", {}))
     output = BytesIO()
     document.save(output)
     return output.getvalue()
@@ -296,10 +370,10 @@ async def render_pdf(report: Report) -> bytes:
         "PLAYWRIGHT_BROWSERS_PATH", str(Path(".browser-cache").resolve())
     )
     body = "".join(
-        f"<{('h1' if kind == 'title' else 'h2' if kind == 'heading' else 'pre')}>{html.escape(text)}</{('h1' if kind == 'title' else 'h2' if kind == 'heading' else 'pre')}>"
+        f"<{('h1' if kind == 'title' else 'h2' if kind == 'heading' else 'p')}>{html.escape(text)}</{('h1' if kind == 'title' else 'h2' if kind == 'heading' else 'p')}>"
         for kind, text in _lines(report)
     )
-    content = f'<!doctype html><html lang="zh"><meta charset="utf-8"><style>body {{font-family: "{family}", sans-serif; font-size: 11px}} pre {{font-family: inherit; white-space: pre-wrap; overflow-wrap: anywhere}} h2 {{break-after: avoid}}</style><body>{body}</body></html>'
+    content = f'<!doctype html><html lang="zh"><meta charset="utf-8"><style>body {{font-family: "{family}", sans-serif; font-size: 11px}} p {{line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere}} h2 {{break-after: avoid}}</style><body>{body}</body></html>'
     async with async_playwright() as playwright:
         browser = await playwright.chromium.launch(chromium_sandbox=True)
         try:

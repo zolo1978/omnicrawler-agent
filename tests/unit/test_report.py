@@ -178,3 +178,27 @@ def test_embedded_url_and_cookie_headers_are_redacted():
     assert "TOP_SECRET" not in text
     assert "COOKIE_SECRET" not in text
     assert "category=public" in text
+
+
+def test_reader_report_uses_plain_labels_and_bounded_details():
+    report = reporting.Report(
+        summary={"records": 100},
+        records=[
+            {
+                "entity_id": f"card-{i}",
+                "fields": {"price": str(i)},
+                "evidence": {
+                    "price": {"url": "https://example.com/card", "locator": ".price"}
+                },
+            }
+            for i in range(100)
+        ],
+    )
+    text = reporting.render_markdown(report)
+    assert '"entity_id"' not in text
+    assert '"records":' not in text
+    assert "100" in text
+    assert "card-0" in text
+    assert "card-99" not in text
+    assert "JSON" in text
+    assert ".price" in text

@@ -54,6 +54,10 @@ uv run --extra crawl4ai omnicrawler serve --allow-host example.com
 
 新增 `start_session`、`answer_questions`、`get_draft`、`preview_session`、`confirm_session`、`task_report`。调用方 Agent 管理对话，OmniCrawler 提供受约束原语。`get_draft` 返回会话视图，含 revision/draft/未知项；confirm 必须提交看到的版本。stdio 启动白名单保持固定。
 
+## 报告阅读体验
+
+Markdown、Word、PDF 使用可读标签与正文，每类记录/变化/冲突最多展示前 20 条，并注明总量；不在正文嵌入原始 JSON。完整记录、前后证据及机器字段保留在独立 JSON 数据文件中。来源与采样证据仍可在正文中核查。
+
 ## 文件与留存
 
 引导任务及其周期任务按确认格式自动写入数据库目录下 `reports/{task_id}/report.*`（默认 data/reports）。任务结果的 `delivery` 包含文件和 warning；直接任务默认仍按需生成 MD/JSON。
