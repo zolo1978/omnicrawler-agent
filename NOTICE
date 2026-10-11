@@ -1,0 +1,11 @@
+OmniCrawler Agent
+Copyright 2026 OmniCrawler Agent contributors
+
+The original code and documentation in this repository are licensed under
+the Apache License, Version 2.0. See LICENSE.
+
+Third-party dependencies retain their own licenses and notices. This repository
+does not vendor their source code or browser binaries. See
+docs/third-party-dependencies.md for the direct runtime dependency inventory
+and config/upstreams.json for research candidates, including components that
+are not integrated. This notice does not relicense third-party software.

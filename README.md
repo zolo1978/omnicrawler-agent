@@ -19,4 +19,4 @@ uv run --extra crawl4ai pytest -q
 - [参考素材说明](docs/references/README.md)
 - [贡献流程](CONTRIBUTING.md)
 
-GitHub 仓库：[zolo1978/omnicrawler-agent](https://github.com/zolo1978/omnicrawler-agent)，以私有仓库保存首版；主项目许可证仍待所有者确认，未授予开源许可。上游组件及参考材料保留各自许可或权利。源码研究副本位于被忽略的 external/upstream/，版本记录见 config/upstreams.json。第三方参考原稿、归档副本、采集数据及本地工具状态不纳入 Git 提交，构建包不包含这些副本。
+GitHub 开源仓库：[zolo1978/omnicrawler-agent](https://github.com/zolo1978/omnicrawler-agent)。原创代码和文档采用 [Apache-2.0](LICENSE)，版权声明见 [NOTICE](NOTICE)，第三方依赖说明见 [依赖清单](docs/third-party-dependencies.md)。上游组件及参考材料保留各自许可或权利。源码研究副本位于被忽略的 external/upstream/，版本记录见 config/upstreams.json。第三方参考原稿、归档副本、采集数据及本地工具状态不纳入 Git 提交，构建包不包含这些副本。
