@@ -26,6 +26,8 @@ engine=auto：有 ready_selector 使用 Playwright；否则安装 Crawl4AI 时�
 
 当前 crawl4ai 路径相当于 HTML 字段抽取加 Crawl4AI 解析验证；cleaned_html 用于处理内容哈希，不承担字段语义抽取。本版不提供 Crawl4AI 的 LLM 语义抽取能力。
 
+Playwright 保持 Chromium 沙箱启用。Ubuntu 23.10+ 的 AppArmor 用户命名空间限制可能阻止下载的 Chromium 启动；部署需按 [Chromium 官方说明](https://chromium.googlesource.com/chromium/src/+/main/docs/security/apparmor-userns-restrictions.md)配置相应二进制路径。CI 仅在临时 runner 中为安装的浏览器路径加载 userns 配置，不提供关闭沙箱的运行选项。
+
 Playwright 本版只渲染已获取 HTML 中的内联脚本；浏览器断网、阻断 HTTP/WebSocket、禁用 WebRTC 与 Service Worker。需要外部 JS/API 的 SPA 不支持；这类任务标记失败或 partial，而不开放任意浏览器网络。没有实现登录凭据托管、验证码绕过或代理轮换。
 
 discovery 可设置 links/sitemap/rss；seed URL 指向链接页、站点地图或 RSS，发现候选仍限于白名单。只做一层发现，达到预算截断时标记不完整，不能推断删除。使用同一数据库与相同配置建立可比历史；配置范围改变会建立新基线。

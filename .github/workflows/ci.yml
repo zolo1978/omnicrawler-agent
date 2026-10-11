@@ -4,12 +4,25 @@ permissions:
   contents: read
 jobs:
   unit:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
       - run: uv sync --locked --extra crawl4ai --python 3.12
       - run: PLAYWRIGHT_BROWSERS_PATH="$PWD/.browser-cache" uv run --extra crawl4ai playwright install --with-deps chromium
+      - name: Allow Chromium sandbox user namespaces
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          binaries = list(Path('.browser-cache').glob('chromium*/**/chrome-headless-shell'))
+          binaries += list(Path('.browser-cache').glob('chromium*/**/chrome'))
+          assert binaries, 'Chromium binaries not found'
+          profiles = ['abi <abi/4.0>,', 'include <tunables/global>']
+          for index, binary in enumerate(binaries):
+              profiles.append(f'profile omnicrawler-ci-{index} "{binary.resolve()}" flags=(unconfined) {{ userns, }}')
+          Path('/tmp/omnicrawler-ci-apparmor').write_text('\n'.join(profiles) + '\n')
+          PY
+          sudo apparmor_parser -r /tmp/omnicrawler-ci-apparmor
       - run: uv run --extra crawl4ai pytest -q
       - run: uv run --extra crawl4ai ruff check src tests
       - run: uv run --extra crawl4ai ruff format --check src tests
