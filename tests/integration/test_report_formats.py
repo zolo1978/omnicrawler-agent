@@ -195,3 +195,11 @@ def test_cleanup_failure_is_warning_and_does_not_abort(tmp_path, monkeypatch):
     result = asyncio.run(reporting.deliver(sample(), tmp_path, formats=("pdf", "json")))
     assert set(result["files"]) == {"json"}
     assert any("清理" in warning for warning in result["warnings"])
+
+
+def test_word_has_readable_body_and_prominent_headings():
+    document = Document(BytesIO(reporting.render_docx(sample())))
+    assert document.styles["Normal"].font.size.pt >= 12
+    assert document.styles["Title"].font.size.pt >= 28
+    assert document.styles["Heading 1"].font.size.pt >= 18
+    assert document.sections[0].header.paragraphs[0].text

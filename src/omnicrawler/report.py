@@ -307,12 +307,49 @@ def render_docx(report: Report) -> bytes:
         from docx import Document
     except ImportError as exc:
         raise RuntimeError("Word 未交付：需要安装 python-docx。") from exc
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+    from docx.shared import Cm, Pt, RGBColor
+
     document = Document()
+    section = document.sections[0]
+    section.page_width, section.page_height = Cm(21), Cm(29.7)
+    section.top_margin = section.bottom_margin = Cm(2)
+    section.left_margin = section.right_margin = Cm(2)
+    for name, size, color in [
+        ("Normal", 12, "243447"),
+        ("Title", 30, "102C46"),
+        ("Heading 1", 20, "102C46"),
+        ("Heading 2", 15, "087F8C"),
+    ]:
+        style = document.styles[name]
+        style.font.name = "Arial"
+        style.font.size = Pt(size)
+        style.font.color.rgb = RGBColor.from_string(color)
+        style.element.get_or_add_rPr().get_or_add_rFonts().set(
+            qn("w:eastAsia"), "Microsoft YaHei"
+        )
+        style.paragraph_format.space_after = Pt(10)
+        style.paragraph_format.line_spacing = 1.5
+    document.styles["Heading 1"].paragraph_format.space_before = Pt(20)
+    header = section.header.paragraphs[0]
+    header.text = "OMNICRAWLER  /  RESEARCH & EVIDENCE"
+    header.style = document.styles["Caption"]
+    footer = section.footer.paragraphs[0]
+    footer.text = "OmniCrawler · 来源可追溯   |   "
+    field = OxmlElement("w:fldSimple")
+    field.set(qn("w:instr"), "PAGE")
+    footer._p.append(field)
     for kind, text in _lines(report):
         if kind in {"title", "heading"}:
             document.add_heading(text, level=0 if kind == "title" else 1)
         else:
-            document.add_paragraph(text)
+            paragraph = document.add_paragraph(text)
+            if text in report.facts[:3]:
+                for run in paragraph.runs:
+                    run.bold = True
+                    run.font.size = Pt(14)
+                    run.font.color.rgb = RGBColor.from_string("102C46")
     summary = document.add_table(rows=1, cols=2)
     summary.style = "Table Grid"
     summary.rows[0].cells[0].text = "汇总指标"
@@ -360,6 +397,96 @@ def cjk_font_family() -> str | None:
     return None
 
 
+def _pdf_html(report: Report, family: str) -> str:
+    data = _clean(report.model_dump(mode="json"))
+    esc = lambda value: html.escape(str(value))
+    metrics = "".join(
+        f'<div class="metric"><div class="number">{esc(_readable(value))}</div><div class="label">{esc(_LABELS.get(key, key))}</div></div>'
+        for key, value in data["summary"].items()
+    )
+    sections = []
+    for title, values in [
+        ("核心发现 · 事实", data["facts"]),
+        ("分析与行动 · 推断", data["inferences"]),
+    ]:
+        content = (
+            "".join(
+                f'<article class="finding"><span class="index">{i:02}</span><p class="{("lead" if i <= 3 else "")}">{esc(text)}</p></article>'
+                for i, text in enumerate(values, 1)
+            )
+            or "<p>暂无内容。</p>"
+        )
+        sections.append(f"<section><h2>{title}</h2>{content}</section>")
+    records = []
+    for record in data["records"][:DETAIL_LIMIT]:
+        fields = record.get("fields", {})
+        rows = "".join(
+            f'<div class="field"><b>{esc(_LABELS.get(key, key))}</b><span>{esc(_readable(value))}</span></div>'
+            for key, value in fields.items()
+        )
+        records.append(
+            f'<article class="record"><h3>{esc(record.get("entity_id", "记录"))} · {esc(fields.get("topic", fields.get("name", "")))}</h3>{rows}<p class="evidence">{esc(_readable(record.get("evidence", {})))}</p></article>'
+        )
+    sections.append(
+        "<section><h2>记录与来源依据</h2>"
+        + "".join(records)
+        + f'<p class="note">共 {len(data["records"])} 条记录，正文最多展示 {DETAIL_LIMIT} 条。完整数据与证据见独立 JSON 文件。</p></section>'
+    )
+    if data["changes"]:
+        rows = "".join(
+            "<p>"
+            + esc(
+                _readable(
+                    {key: value for key, value in change.items() if key != "evidence"}
+                )
+            )
+            + "</p>"
+            for change in data["changes"][:DETAIL_LIMIT]
+        )
+        sections.append(
+            "<section><h2>变化 · before → after</h2>"
+            + rows
+            + f'<p class="note">共 {len(data["changes"])} 条变化；完整前后证据见 JSON 文件。</p></section>'
+        )
+    if data["claims"]:
+        sections.append(
+            "<section><h2>字段冲突与观测</h2>"
+            + "".join(
+                "<p>" + esc(_readable(claim)) + "</p>"
+                for claim in data["claims"][:DETAIL_LIMIT]
+            )
+            + "</section>"
+        )
+    sources = "".join(
+        f'<p class="source"><b>{i:02}</b> {esc(url)}</p>'
+        for i, url in enumerate(data["sources"], 1)
+    )
+    css = """
+    body {font-size:12pt; color:#243447; line-height:1.75; margin:0}
+    .cover {border-top:8px solid #087f8c; padding:24px 0 20px; margin-bottom:24px; border-bottom:1px solid #d9e3eb}
+    .eyebrow {font-size:10pt; letter-spacing:2px; color:#087f8c; font-weight:700}
+    h1 {font-size:30pt; line-height:1.35; color:#102c46; margin:14px 0 20px; letter-spacing:-.5px}
+    .goal {font-size:14pt; line-height:1.7} .meta {font-size:10.5pt; color:#5b6f82}
+    h2 {font-size:20pt; line-height:1.4; margin:30px 0 18px; color:#102c46; border-left:5px solid #087f8c; padding-left:12px; break-after:avoid}
+    h3 {font-size:15pt; color:#102c46; line-height:1.5; margin:0 0 14px; break-after:avoid}
+    .metrics {display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin:24px 0; break-inside:avoid}
+    .metric {background:#edf5f6; border-radius:8px; padding:14px 16px} .number {font-size:24pt; font-weight:700; color:#087f8c; line-height:1.2} .label {font-size:11pt; margin-top:8px}
+    p {margin:0 0 14px; overflow-wrap:anywhere; orphans:3; widows:3}
+    .finding {position:relative; padding-left:38px; margin-bottom:20px; break-inside:avoid}
+    .index {position:absolute; left:0; top:3px; color:#087f8c; font-weight:700; font-size:13pt}
+    .lead {font-size:14pt; font-weight:600; color:#102c46}
+    .record {border-top:1px solid #d9e3eb; padding:18px 0; margin:12px 0}
+    .field {display:grid; grid-template-columns:90px 1fr; gap:12px; margin:8px 0; break-inside:avoid}
+    .field b {color:#5b6f82; font-size:11pt} .evidence,.note,.source {font-size:10.5pt; color:#5b6f82; line-height:1.7}
+    .evidence {background:#f3f6f9; padding:12px; border-radius:6px; margin-top:14px} .source {padding-bottom:10px; border-bottom:1px solid #e6edf2}
+    """
+    return (
+        f'<!doctype html><html lang="zh"><meta charset="utf-8"><style>body {{font-family:"{esc(family)}",sans-serif}}{css}</style><body><header class="cover"><div class="eyebrow">OMNICRAWLER / RESEARCH BRIEF</div><h1>{esc(data["title"])}</h1><p class="goal">{esc(data["goal"])}</p><p class="meta">{esc(data["generated_at"][:10])} · {esc({"succeeded": "已完成", "partial": "部分完成", "blocked": "访问受限", "failed": "执行失败"}.get(data["status"], data["status"]))} · 来源与结论分层呈现</p><div class="metrics">{metrics}</div></header>'
+        + "".join(sections)
+        + f"<section><h2>来源索引</h2>{sources}</section></body></html>"
+    )
+
+
 async def render_pdf(report: Report) -> bytes:
     family = cjk_font_family()
     if not family:
@@ -369,11 +496,7 @@ async def render_pdf(report: Report) -> bytes:
     os.environ.setdefault(
         "PLAYWRIGHT_BROWSERS_PATH", str(Path(".browser-cache").resolve())
     )
-    body = "".join(
-        f"<{('h1' if kind == 'title' else 'h2' if kind == 'heading' else 'p')}>{html.escape(text)}</{('h1' if kind == 'title' else 'h2' if kind == 'heading' else 'p')}>"
-        for kind, text in _lines(report)
-    )
-    content = f'<!doctype html><html lang="zh"><meta charset="utf-8"><style>body {{font-family: "{family}", sans-serif; font-size: 11px}} p {{line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere}} h2 {{break-after: avoid}}</style><body>{body}</body></html>'
+    content = _pdf_html(report, family)
     async with async_playwright() as playwright:
         browser = await playwright.chromium.launch(chromium_sandbox=True)
         try:
@@ -387,6 +510,9 @@ async def render_pdf(report: Report) -> bytes:
             return await page.pdf(
                 format="A4",
                 print_background=True,
+                display_header_footer=True,
+                header_template="<span></span>",
+                footer_template='<div style="font-size:9px;color:#64748b;width:100%;margin:0 15mm;display:flex;justify-content:space-between"><span>OMNICRAWLER · RESEARCH &amp; EVIDENCE</span><span><span class="pageNumber"></span> / <span class="totalPages"></span></span></div>',
                 margin={
                     "top": "16mm",
                     "bottom": "16mm",
