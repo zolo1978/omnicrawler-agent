@@ -1,0 +1,36 @@
+[
+  {
+    "name": "minimax-pdf",
+    "repository": "MiniMax-AI/skills",
+    "commit": "60aaae52bb2af8162732751a4332f62a5fef518b",
+    "skill_path": "skills/minimax-pdf/SKILL.md",
+    "license": "MIT",
+    "sha256": {
+      "SKILL.upstream.md": "8b0497ddd27da142deb09b570a56f702f95e5f3f1e192cfe1ae24421416a408d",
+      "LICENSE.txt": "eed4ccce37c2d24822da3bd9d5bee7bc12d494741de56ada513d0b97f537fcd0",
+      "design.upstream.md": "870932013e86371697d88406273f8796830270a9171ac8065b13078acef6ffe2"
+    }
+  },
+  {
+    "name": "document-design",
+    "repository": "jamditis/claude-skills-journalism",
+    "commit": "e3e2172f760b8f13c7d827092c03bdb58e40b263",
+    "skill_path": "pdf-playground/skills/document-design/SKILL.md",
+    "license": "MIT",
+    "sha256": {
+      "SKILL.upstream.md": "8347a42fb06f8108092cedd512acb3fcf8ddcdc25218b9b5d23dce723518d4b7",
+      "LICENSE.txt": "7e0b7a2e990589d3227c08bd999967639fb3514167fc7272bf75641ea2b04a69"
+    }
+  },
+  {
+    "name": "frontend-design",
+    "repository": "anthropics/skills",
+    "commit": "dbd4588f9e1033efb41dad4bef2f7947c8993d44",
+    "skill_path": "skills/frontend-design/SKILL.md",
+    "license": "Apache-2.0",
+    "sha256": {
+      "SKILL.upstream.md": "d91970639e9f5c37682ac7ab60094d35f1c7c1f38d731bd56396563aee10c1d3",
+      "LICENSE.txt": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594"
+    }
+  }
+]

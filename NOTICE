@@ -9,3 +9,12 @@ does not vendor their source code or browser binaries. See
 docs/third-party-dependencies.md for the direct runtime dependency inventory
 and config/upstreams.json for research candidates, including components that
 are not integrated. This notice does not relicense third-party software.
+
+Document-design skill references are vendored under their original licenses:
+MiniMax-AI/skills (MIT, Copyright 2026 MiniMax);
+jamditis/claude-skills-journalism (MIT, see retained LICENSE.txt);
+anthropics/skills frontend-design only (Apache-2.0).
+See docs/references/document-design for exact commits, original files and
+license copies. OmniCrawler's extracted design skill is rewritten and adapted
+for offline Chinese A4 reports. No upstream brand assets or document scripts
+are included. This notice does not relicense the upstream materials.

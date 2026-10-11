@@ -13,6 +13,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 from omnicrawler.governance import sanitize
+from omnicrawler.report_design import THEME
 
 
 class Report(BaseModel):
@@ -234,6 +235,83 @@ def _readable(value, depth=0):
     return str(value)
 
 
+def _evidence_summary(value):
+    groups = {}
+    notes = []
+
+    def visit(item):
+        if isinstance(item, dict):
+            if item.get("url"):
+                key = (str(item["url"]), str(item.get("captured_at", "")))
+                groups.setdefault(key, set())
+                if item.get("locator"):
+                    groups[key].add(str(item["locator"]))
+                if item.get("method"):
+                    notes.append(str(item["method"]))
+            else:
+                for child in item.values():
+                    visit(child)
+        elif isinstance(item, list):
+            for child in item:
+                visit(child)
+
+    visit(value)
+    lines = [
+        f"来源：{url}"
+        + (f"；采集时间：{time}" if time else "")
+        + (f"；页面位置：{' / '.join(sorted(locators)[:3])}" if locators else "")
+        for (url, time), locators in groups.items()
+    ]
+    if any(len(locators) > 3 for locators in groups.values()):
+        lines.append("其余字段定位见完整 JSON 证据文件")
+    return "；".join(lines + list(dict.fromkeys(notes))) or _readable(value)
+
+
+def _reader_record(record):
+    return (
+        _readable({key: value for key, value in record.items() if key != "evidence"})
+        + "；来源依据："
+        + _evidence_summary(record.get("evidence", {}))
+    )
+
+
+def _reader_claim(claim):
+    header = _readable(
+        {key: value for key, value in claim.items() if key != "observations"}
+    )
+    observations = []
+    for observation in claim.get("observations", []):
+        observations.append(
+            "观测值："
+            + _readable(observation.get("value"))
+            + "；"
+            + _evidence_summary(observation.get("evidence", {}))
+        )
+    return header + "；" + " / ".join(observations)
+
+
+def _reader_change(change):
+    visible = {key: value for key, value in change.items() if key != "evidence"}
+    before, after = change.get("before"), change.get("after")
+    if (
+        change.get("kind") == "modified"
+        and isinstance(before, dict)
+        and isinstance(after, dict)
+    ):
+        changed = {
+            key
+            for key in before.keys() | after.keys()
+            if before.get(key) != after.get(key)
+        }
+        visible["before"] = {
+            key: value for key, value in before.items() if key in changed
+        }
+        visible["after"] = {
+            key: value for key, value in after.items() if key in changed
+        }
+    return _readable(visible)
+
+
 def _lines(report: Report) -> list[tuple[str, str]]:
     data = _clean(report.model_dump(mode="json"))
     lines = [
@@ -257,7 +335,7 @@ def _lines(report: Report) -> list[tuple[str, str]]:
     if not data["records"]:
         lines.append(("text", "无记录。"))
     for record in data["records"][:DETAIL_LIMIT]:
-        lines.append(("text", _readable(record)))
+        lines.append(("text", _reader_record(record)))
     if len(data["records"]) > DETAIL_LIMIT:
         lines.append(
             (
@@ -267,8 +345,7 @@ def _lines(report: Report) -> list[tuple[str, str]]:
         )
     lines.append(("heading", "变化：before → after 与证据"))
     for change in data["changes"][:DETAIL_LIMIT]:
-        visible = {key: value for key, value in change.items() if key != "evidence"}
-        lines.append(("text", _readable(visible)))
+        lines.append(("text", _reader_change(change)))
     if data["changes"]:
         lines.append(
             (
@@ -279,10 +356,17 @@ def _lines(report: Report) -> list[tuple[str, str]]:
     if not data["changes"]:
         lines.append(("text", "无变化事件；首个快照或不完整范围不能推断删除。"))
     lines.append(("heading", "字段观测与冲突证据"))
-    for claim in data["claims"][:DETAIL_LIMIT]:
-        lines.append(("text", _readable(claim)))
-    if len(data["claims"]) > DETAIL_LIMIT:
-        lines.append(("text", "其余来源观测与冲突证据见 JSON 数据文件。"))
+    for claim in [c for c in data["claims"] if c.get("status") == "disputed"][
+        :DETAIL_LIMIT
+    ]:
+        lines.append(("text", _reader_claim(claim)))
+    if data["claims"]:
+        lines.append(
+            (
+                "text",
+                f"共 {len(data['claims'])} 个字段观测；正文突出争议项，完整观测与冲突证据见 JSON 数据文件。",
+            )
+        )
     lines.append(("heading", "来源"))
     lines.extend(("text", source) for source in data["sources"])
     return lines
@@ -314,13 +398,13 @@ def render_docx(report: Report) -> bytes:
     document = Document()
     section = document.sections[0]
     section.page_width, section.page_height = Cm(21), Cm(29.7)
-    section.top_margin = section.bottom_margin = Cm(2)
-    section.left_margin = section.right_margin = Cm(2)
+    section.top_margin = section.bottom_margin = Cm(THEME.margin_mm / 10)
+    section.left_margin = section.right_margin = Cm(THEME.margin_mm / 10)
     for name, size, color in [
-        ("Normal", 12, "243447"),
-        ("Title", 30, "102C46"),
-        ("Heading 1", 20, "102C46"),
-        ("Heading 2", 15, "087F8C"),
+        ("Normal", THEME.body_pt, THEME.text[1:]),
+        ("Title", THEME.title_pt, THEME.ink[1:]),
+        ("Heading 1", THEME.section_pt, THEME.ink[1:]),
+        ("Heading 2", THEME.subheading_pt, THEME.ink[1:]),
     ]:
         style = document.styles[name]
         style.font.name = "Arial"
@@ -330,48 +414,68 @@ def render_docx(report: Report) -> bytes:
             qn("w:eastAsia"), "Microsoft YaHei"
         )
         style.paragraph_format.space_after = Pt(10)
-        style.paragraph_format.line_spacing = 1.5
+        style.paragraph_format.line_spacing = THEME.line_height
     document.styles["Heading 1"].paragraph_format.space_before = Pt(20)
     header = section.header.paragraphs[0]
-    header.text = "OMNICRAWLER  /  RESEARCH & EVIDENCE"
+    header.text = "OmniCrawler · 调研与证据"
     header.style = document.styles["Caption"]
     footer = section.footer.paragraphs[0]
     footer.text = "OmniCrawler · 来源可追溯   |   "
     field = OxmlElement("w:fldSimple")
     field.set(qn("w:instr"), "PAGE")
     footer._p.append(field)
+    cleaned = _clean(report.model_dump(mode="json"))
+    summary_text = _readable(cleaned["summary"])
     for kind, text in _lines(report):
         if kind in {"title", "heading"}:
             document.add_heading(text, level=0 if kind == "title" else 1)
-        else:
+            if text == "汇总" and cleaned["summary"]:
+                table = document.add_table(rows=1, cols=2)
+                table.style = "Light Shading Accent 1"
+                table.rows[0].cells[0].text = "汇总指标"
+                table.rows[0].cells[1].text = "值"
+                repeat = OxmlElement("w:tblHeader")
+                table.rows[0]._tr.get_or_add_trPr().append(repeat)
+                for key, value in cleaned["summary"].items():
+                    cells = table.add_row().cells
+                    cells[0].text, cells[1].text = (
+                        _LABELS.get(key, key),
+                        _readable(value),
+                    )
+                for index, row in enumerate(table.rows):
+                    for cell in row.cells:
+                        shade = OxmlElement("w:shd")
+                        shade.set(
+                            qn("w:fill"),
+                            THEME.accent[1:]
+                            if index == 0
+                            else (THEME.tint[1:] if index % 2 else "FFFFFF"),
+                        )
+                        cell._tc.get_or_add_tcPr().append(shade)
+                        margins = OxmlElement("w:tcMar")
+                        for side in ["top", "bottom", "left", "right"]:
+                            edge = OxmlElement("w:" + side)
+                            edge.set(qn("w:w"), "100")
+                            edge.set(qn("w:type"), "dxa")
+                            margins.append(edge)
+                        cell._tc.get_or_add_tcPr().append(margins)
+                        for paragraph in cell.paragraphs:
+                            paragraph.paragraph_format.space_after = Pt(4)
+                            for run in paragraph.runs:
+                                run.bold = index == 0
+                                if index == 0:
+                                    run.font.color.rgb = RGBColor.from_string("FFFFFF")
+        elif text != summary_text or not cleaned["summary"]:
             paragraph = document.add_paragraph(text)
-            if text in report.facts[:3]:
+            paragraph.paragraph_format.widow_control = True
+            if text in cleaned["facts"][:3]:
                 for run in paragraph.runs:
                     run.bold = True
-                    run.font.size = Pt(14)
-                    run.font.color.rgb = RGBColor.from_string("102C46")
-    summary = document.add_table(rows=1, cols=2)
-    summary.style = "Table Grid"
-    summary.rows[0].cells[0].text = "汇总指标"
-    summary.rows[0].cells[1].text = "值"
-    cleaned = _clean(report.model_dump(mode="json"))
-    for key, value in cleaned["summary"].items():
-        cells = summary.add_row().cells
-        cells[0].text, cells[1].text = _LABELS.get(key, key), _readable(value)
-    if cleaned["records"]:
-        records = document.add_table(rows=1, cols=3)
-        records.style = "Table Grid"
-        for cell, label in zip(
-            records.rows[0].cells,
-            ["实体", "字段和值", "证据（URL / 定位 / 时间）"],
-            strict=True,
-        ):
-            cell.text = label
-        for record in cleaned["records"][:DETAIL_LIMIT]:
-            cells = records.add_row().cells
-            cells[0].text = str(record.get("entity_id", ""))
-            cells[1].text = _readable(record.get("fields", {}))
-            cells[2].text = _readable(record.get("evidence", {}))
+                    run.font.size = Pt(THEME.emphasis_pt)
+                    run.font.color.rgb = RGBColor.from_string(THEME.ink[1:])
+            if text in cleaned["sources"]:
+                paragraph.paragraph_format.left_indent = Cm(0.6)
+                paragraph.paragraph_format.first_line_indent = Cm(-0.6)
     output = BytesIO()
     document.save(output)
     return output.getvalue()
@@ -411,7 +515,7 @@ def _pdf_html(report: Report, family: str) -> str:
     ]:
         content = (
             "".join(
-                f'<article class="finding"><span class="index">{i:02}</span><p class="{("lead" if i <= 3 else "")}">{esc(text)}</p></article>'
+                f'<article class="finding"><p class="{("lead" if i <= 3 else "")}">{esc(text)}</p></article>'
                 for i, text in enumerate(values, 1)
             )
             or "<p>暂无内容。</p>"
@@ -424,8 +528,13 @@ def _pdf_html(report: Report, family: str) -> str:
             f'<div class="field"><b>{esc(_LABELS.get(key, key))}</b><span>{esc(_readable(value))}</span></div>'
             for key, value in fields.items()
         )
+        compact = (
+            "compact"
+            if fields and all(len(str(value)) < 80 for value in fields.values())
+            else ""
+        )
         records.append(
-            f'<article class="record"><h3>{esc(record.get("entity_id", "记录"))} · {esc(fields.get("topic", fields.get("name", "")))}</h3>{rows}<p class="evidence">{esc(_readable(record.get("evidence", {})))}</p></article>'
+            f'<article class="record"><h3>{esc(record.get("entity_id", "记录"))} · {esc(fields.get("topic", fields.get("name", "")))}</h3><div class="{compact}">{rows}</div><p class="evidence">{esc(_evidence_summary(record.get("evidence", {})))}</p></article>'
         )
     sections.append(
         "<section><h2>记录与来源依据</h2>"
@@ -434,13 +543,7 @@ def _pdf_html(report: Report, family: str) -> str:
     )
     if data["changes"]:
         rows = "".join(
-            "<p>"
-            + esc(
-                _readable(
-                    {key: value for key, value in change.items() if key != "evidence"}
-                )
-            )
-            + "</p>"
+            "<p>" + esc(_reader_change(change)) + "</p>"
             for change in data["changes"][:DETAIL_LIMIT]
         )
         sections.append(
@@ -448,14 +551,15 @@ def _pdf_html(report: Report, family: str) -> str:
             + rows
             + f'<p class="note">共 {len(data["changes"])} 条变化；完整前后证据见 JSON 文件。</p></section>'
         )
-    if data["claims"]:
+    disputed = [claim for claim in data["claims"] if claim.get("status") == "disputed"]
+    if disputed:
         sections.append(
             "<section><h2>字段冲突与观测</h2>"
             + "".join(
-                "<p>" + esc(_readable(claim)) + "</p>"
-                for claim in data["claims"][:DETAIL_LIMIT]
+                "<p>" + esc(_reader_claim(claim)) + "</p>"
+                for claim in disputed[:DETAIL_LIMIT]
             )
-            + "</section>"
+            + '<p class="note">完整争议与观测见 JSON 文件。</p></section>'
         )
     sources = "".join(
         f'<p class="source"><b>{i:02}</b> {esc(url)}</p>'
@@ -470,20 +574,40 @@ def _pdf_html(report: Report, family: str) -> str:
     h2 {font-size:20pt; line-height:1.4; margin:30px 0 18px; color:#102c46; border-left:5px solid #087f8c; padding-left:12px; break-after:avoid}
     h3 {font-size:15pt; color:#102c46; line-height:1.5; margin:0 0 14px; break-after:avoid}
     .metrics {display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin:24px 0; break-inside:avoid}
-    .metric {background:#edf5f6; border-radius:8px; padding:14px 16px} .number {font-size:24pt; font-weight:700; color:#087f8c; line-height:1.2} .label {font-size:11pt; margin-top:8px}
+    .metric {background:#edf5f6; border-radius:3px; padding:14px 16px} .number {font-size:24pt; font-weight:700; color:#087f8c; line-height:1.2} .label {font-size:11pt; margin-top:8px}
     p {margin:0 0 14px; overflow-wrap:anywhere; orphans:3; widows:3}
-    .finding {position:relative; padding-left:38px; margin-bottom:20px; break-inside:avoid}
+    .finding {margin-bottom:20px; break-inside:avoid}
     .index {position:absolute; left:0; top:3px; color:#087f8c; font-weight:700; font-size:13pt}
     .lead {font-size:14pt; font-weight:600; color:#102c46}
-    .record {border-top:1px solid #d9e3eb; padding:18px 0; margin:12px 0}
+    .record {break-inside:avoid; border-top:1px solid #d9e3eb; padding:18px 0; margin:12px 0}
     .field {display:grid; grid-template-columns:90px 1fr; gap:12px; margin:8px 0; break-inside:avoid}
+    .change-section {break-inside:avoid}
+    .source-group {break-inside:avoid}
+    .compact {display:grid; grid-template-columns:1fr 1fr; gap:0 20px}
+    .compact .field {grid-template-columns:70px 1fr; margin:4px 0}
     .field b {color:#5b6f82; font-size:11pt} .evidence,.note,.source {font-size:10.5pt; color:#5b6f82; line-height:1.7}
-    .evidence {background:#f3f6f9; padding:12px; border-radius:6px; margin-top:14px} .source {padding-bottom:10px; border-bottom:1px solid #e6edf2}
+    .evidence {background:#f3f6f9; padding:12px; border-radius:3px; margin-top:14px} .source {break-inside:avoid; padding-bottom:10px; border-bottom:1px solid #e6edf2}
     """
+    for original, replacement in {
+        "12pt": f"{THEME.body_pt}pt",
+        "30pt": f"{THEME.title_pt}pt",
+        "20pt": f"{THEME.section_pt}pt",
+        "15pt": f"{THEME.subheading_pt}pt",
+        "14pt": f"{THEME.emphasis_pt}pt",
+        "10.5pt": f"{THEME.evidence_pt}pt",
+        "#243447": THEME.text,
+        "#102c46": THEME.ink,
+        "#087f8c": THEME.accent,
+        "#5b6f82": THEME.muted,
+        "#edf5f6": THEME.tint,
+        "#d9e3eb": THEME.rule,
+    }.items():
+        css = css.replace(original, replacement)
+    css += f"body {{line-height:{THEME.line_height}}} @media print {{* {{print-color-adjust:exact}}}}"
     return (
-        f'<!doctype html><html lang="zh"><meta charset="utf-8"><style>body {{font-family:"{esc(family)}",sans-serif}}{css}</style><body><header class="cover"><div class="eyebrow">OMNICRAWLER / RESEARCH BRIEF</div><h1>{esc(data["title"])}</h1><p class="goal">{esc(data["goal"])}</p><p class="meta">{esc(data["generated_at"][:10])} · {esc({"succeeded": "已完成", "partial": "部分完成", "blocked": "访问受限", "failed": "执行失败"}.get(data["status"], data["status"]))} · 来源与结论分层呈现</p><div class="metrics">{metrics}</div></header>'
+        f'<!doctype html><html lang="zh"><meta charset="utf-8"><style>body {{font-family:"{esc(family)}",sans-serif}}{css}</style><body><header class="cover"><div class="eyebrow">OmniCrawler 调研报告</div><h1>{esc(data["title"])}</h1><p class="goal">{esc(data["goal"])}</p><p class="meta">{esc(data["generated_at"][:10])} · {esc({"succeeded": "已完成", "partial": "部分完成", "blocked": "访问受限", "failed": "执行失败"}.get(data["status"], data["status"]))} · 来源与结论分层呈现</p><div class="metrics">{metrics}</div></header>'
         + "".join(sections)
-        + f"<section><h2>来源索引</h2>{sources}</section></body></html>"
+        + f'<section class="{("source-group" if len(data["sources"]) <= 8 else "")}"><h2>来源索引</h2>{sources}</section></body></html>'
     )
 
 
@@ -512,12 +636,12 @@ async def render_pdf(report: Report) -> bytes:
                 print_background=True,
                 display_header_footer=True,
                 header_template="<span></span>",
-                footer_template='<div style="font-size:9px;color:#64748b;width:100%;margin:0 15mm;display:flex;justify-content:space-between"><span>OMNICRAWLER · RESEARCH &amp; EVIDENCE</span><span><span class="pageNumber"></span> / <span class="totalPages"></span></span></div>',
+                footer_template='<div style="font-size:9px;color:#64748b;width:100%;margin:0 15mm;display:flex;justify-content:space-between"><span>OmniCrawler · 调研与证据</span><span><span class="pageNumber"></span> / <span class="totalPages"></span></span></div>',
                 margin={
-                    "top": "16mm",
-                    "bottom": "16mm",
-                    "left": "15mm",
-                    "right": "15mm",
+                    "top": f"{THEME.margin_mm}mm",
+                    "bottom": f"{THEME.margin_mm}mm",
+                    "left": f"{THEME.margin_mm}mm",
+                    "right": f"{THEME.margin_mm}mm",
                 },
             )
         finally:

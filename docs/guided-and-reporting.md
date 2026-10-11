@@ -56,6 +56,8 @@ uv run --extra crawl4ai omnicrawler serve --allow-host example.com
 
 ## 报告阅读体验
 
+设计规则由项目技能 `.agents/skills/report-design/SKILL.md` 维护；详见 [设计系统](report-design.md)。共享设计变量直接应用于 Word/PDF，汇总表前置、表头跨页重复，避免重复输出记录。
+
 PDF / Word 使用 12 磅正文、约 30 磅主标题与 20 磅章节标题；关键发现放大，PDF 汇总指标使用数字卡片，配页码、留白与分块来源说明。
 
 Markdown、Word、PDF 使用可读标签与正文，每类记录/变化/冲突最多展示前 20 条，并注明总量；不在正文嵌入原始 JSON。完整记录、前后证据及机器字段保留在独立 JSON 数据文件中。来源与采样证据仍可在正文中核查。

@@ -203,3 +203,21 @@ def test_word_has_readable_body_and_prominent_headings():
     assert document.styles["Title"].font.size.pt >= 28
     assert document.styles["Heading 1"].font.size.pt >= 18
     assert document.sections[0].header.paragraphs[0].text
+
+
+def test_word_summary_is_before_findings_and_records_are_not_duplicated():
+    from docx.oxml.ns import qn
+
+    document = Document(BytesIO(reporting.render_docx(sample())))
+    children = list(document.element.body)
+    table_index = next(
+        i for i, element in enumerate(children) if element.tag == qn("w:tbl")
+    )
+    facts_index = next(
+        i
+        for i, element in enumerate(children)
+        if element.tag == qn("w:p") and "".join(element.itertext()).startswith("事实")
+    )
+    assert table_index < facts_index
+    assert len(document.tables) == 1
+    assert document.tables[0].rows[0]._tr.trPr.find(qn("w:tblHeader")) is not None

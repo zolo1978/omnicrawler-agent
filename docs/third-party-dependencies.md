@@ -20,3 +20,7 @@
 config/upstreams.json 是研究候选清单，不是已集成依赖清单。Firecrawl 的 AGPL-3.0 源码未纳入当前实现；后续接入或分发须按实际目录和组合重新审查。用户提供的第三方参考原稿、归档副本及采集数据不在公开提交范围内，也不受主项目许可授权。
 
 报告测试使用 pypdf 6.20.0（BSD-3-Clause）验证 PDF 中文文本；它只属于开发依赖。Linux PDF 部署需系统 Noto CJK 字体（SIL Open Font License 1.1）；字体不随本项目分发。
+
+## 文档设计参考（非运行时依赖）
+
+2026-10-12 整合 MiniMax minimax-pdf（MIT）、jamditis document-design（MIT）、Anthropic frontend-design（Apache-2.0）的设计模式。原件与许可随仓库保存于 docs/references/document-design，固定提交与校验值见 manifest.json；萃取版使用项目自己的中文 A4 离线实现。没有执行上游脚本或纳入其运行时。

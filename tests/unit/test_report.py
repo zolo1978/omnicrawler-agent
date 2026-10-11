@@ -202,3 +202,17 @@ def test_reader_report_uses_plain_labels_and_bounded_details():
     assert "card-99" not in text
     assert "JSON" in text
     assert ".price" in text
+
+
+def test_reader_changes_show_changed_fields_and_keep_machine_evidence():
+    change = {
+        "kind": "modified",
+        "entity_id": "A",
+        "before": {"price": "10", "unchanged_detail": "redundant"},
+        "after": {"price": "20", "unchanged_detail": "redundant"},
+    }
+    report = reporting.Report(changes=[change])
+    text = reporting.render_markdown(report)
+    assert "10" in text and "20" in text
+    assert "redundant" not in text
+    assert report.changes[0]["before"]["unchanged_detail"] == "redundant"
