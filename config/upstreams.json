@@ -1,0 +1,164 @@
+{
+  "schema_version": 1,
+  "projects": [
+    {
+      "name": "crawl4ai",
+      "source_url": "https://github.com/unclecode/crawl4ai",
+      "ref": "aadd82bebf989f1c36e1b557b8bb2b7c9dae393f",
+      "commit": "aadd82bebf989f1c36e1b557b8bb2b7c9dae393f",
+      "license": "Apache-2.0",
+      "download_status": "downloaded",
+      "integration_stage": "mvp",
+      "checked_at": "2026-10-11T11:56:52.316376+00:00",
+      "license_files": [
+        "external/upstream/crawl4ai/LICENSE"
+      ],
+      "license_review": "root_text_reviewed; transitive and directory-level review pending"
+    },
+    {
+      "name": "playwright",
+      "source_url": "https://github.com/microsoft/playwright",
+      "ref": "d9f2fd3e2232ace8e317a84eda6cb86e25bcf49c",
+      "commit": "d9f2fd3e2232ace8e317a84eda6cb86e25bcf49c",
+      "license": "Apache-2.0",
+      "download_status": "downloaded",
+      "integration_stage": "mvp",
+      "checked_at": "2026-10-11T11:56:52.316601+00:00",
+      "license_files": [
+        "external/upstream/playwright/LICENSE",
+        "external/upstream/playwright/NOTICE"
+      ],
+      "license_review": "root_text_reviewed; transitive and directory-level review pending"
+    },
+    {
+      "name": "playwright-python",
+      "source_url": "https://github.com/microsoft/playwright-python",
+      "ref": "ae494b214c39ade743293e29129dc45b6dcce578",
+      "commit": "ae494b214c39ade743293e29129dc45b6dcce578",
+      "license": "Apache-2.0",
+      "download_status": "downloaded",
+      "integration_stage": "mvp",
+      "checked_at": "2026-10-11T11:56:52.317921+00:00",
+      "license_files": [
+        "external/upstream/playwright-python/LICENSE"
+      ],
+      "license_review": "root_text_reviewed; transitive and directory-level review pending"
+    },
+    {
+      "name": "beautifulsoup4",
+      "source_url": "https://www.crummy.com/software/BeautifulSoup/",
+      "ref": "4.15.0",
+      "commit": null,
+      "license": "MIT",
+      "download_status": "downloaded_sdist",
+      "integration_stage": "mvp",
+      "checked_at": "2026-10-11T11:56:52.319162+00:00",
+      "sha256": "288e3ca7d54b06f2ac191970bc275c1939cb46d450b255bf6718b04aa37ab4f7",
+      "artifact_url": "https://files.pythonhosted.org/packages/43/65/318323f98dbee45d42dff61d8f047181bc6f2268a9068cfad035a46be5af/beautifulsoup4-4.15.0.tar.gz",
+      "license_files": [
+        "external/upstream/beautifulsoup4/beautifulsoup4-4.15.0/LICENSE"
+      ],
+      "license_review": "root_text_reviewed; transitive and directory-level review pending"
+    },
+    {
+      "name": "scrapy",
+      "source_url": "https://github.com/scrapy/scrapy",
+      "ref": "be7bdc4cd16644018fa56ef3503dce86744fa6d5",
+      "commit": "be7bdc4cd16644018fa56ef3503dce86744fa6d5",
+      "license": "BSD-3-Clause",
+      "download_status": "downloaded",
+      "integration_stage": "scale",
+      "checked_at": "2026-10-11T11:56:54.832928+00:00",
+      "license_files": [
+        "external/upstream/scrapy/LICENSE"
+      ],
+      "license_review": "root_text_reviewed; transitive and directory-level review pending"
+    },
+    {
+      "name": "llmsherpa",
+      "source_url": "https://github.com/nlmatics/llmsherpa",
+      "ref": "114298d059c6b2d90865cf62b4566169bc25c9a7",
+      "commit": "114298d059c6b2d90865cf62b4566169bc25c9a7",
+      "license": "MIT",
+      "download_status": "downloaded",
+      "integration_stage": "documents",
+      "checked_at": "2026-10-11T11:56:56.455837+00:00",
+      "license_files": [
+        "external/upstream/llmsherpa/LICENSE"
+      ],
+      "license_review": "root_text_reviewed; transitive and directory-level review pending"
+    },
+    {
+      "name": "nlm-ingestor",
+      "source_url": "https://github.com/nlmatics/nlm-ingestor",
+      "ref": "5f0c1b920eda649637713578471577cb1feb7209",
+      "commit": "5f0c1b920eda649637713578471577cb1feb7209",
+      "license": "Apache-2.0",
+      "download_status": "downloaded",
+      "integration_stage": "documents",
+      "checked_at": "2026-10-11T11:56:57.450641+00:00",
+      "license_files": [
+        "external/upstream/nlm-ingestor/NOTICE.txt",
+        "external/upstream/nlm-ingestor/LICENSE.txt"
+      ],
+      "license_review": "root_text_reviewed; transitive and directory-level review pending"
+    },
+    {
+      "name": "firecrawl",
+      "source_url": "https://github.com/firecrawl/firecrawl",
+      "ref": "f84845c864b6e2af22791c18fcf89ac2a21f1434",
+      "commit": "f84845c864b6e2af22791c18fcf89ac2a21f1434",
+      "license": "AGPL-3.0 (root; directory exceptions require review)",
+      "download_status": "downloaded",
+      "integration_stage": "optional",
+      "checked_at": "2026-10-11T11:56:58.061880+00:00",
+      "license_files": [
+        "external/upstream/firecrawl/LICENSE"
+      ],
+      "license_review": "root_text_reviewed; transitive and directory-level review pending"
+    },
+    {
+      "name": "crawlee",
+      "source_url": "https://github.com/apify/crawlee",
+      "ref": "dc52c6dffd55682ab836b37d2271e4c3dfad9cfe",
+      "commit": "dc52c6dffd55682ab836b37d2271e4c3dfad9cfe",
+      "license": "Apache-2.0",
+      "download_status": "downloaded",
+      "integration_stage": "optional",
+      "checked_at": "2026-10-11T11:56:59.946672+00:00",
+      "license_files": [
+        "external/upstream/crawlee/LICENSE.md"
+      ],
+      "license_review": "root_text_reviewed; transitive and directory-level review pending"
+    },
+    {
+      "name": "selenium",
+      "source_url": "https://github.com/SeleniumHQ/selenium",
+      "ref": "1151eadf5f34ff6b34537fb8ff918667ac406e31",
+      "commit": "1151eadf5f34ff6b34537fb8ff918667ac406e31",
+      "license": "Apache-2.0",
+      "download_status": "downloaded",
+      "integration_stage": "legacy",
+      "checked_at": "2026-10-11T11:57:00.440449+00:00",
+      "license_files": [
+        "external/upstream/selenium/LICENSE",
+        "external/upstream/selenium/NOTICE"
+      ],
+      "license_review": "root_text_reviewed; transitive and directory-level review pending"
+    },
+    {
+      "name": "splash",
+      "source_url": "https://github.com/scrapinghub/splash",
+      "ref": "ab28b0233c245461189881f1f5656b96371a4b40",
+      "commit": "ab28b0233c245461189881f1f5656b96371a4b40",
+      "license": "BSD-3-Clause",
+      "download_status": "downloaded",
+      "integration_stage": "legacy",
+      "checked_at": "2026-10-11T11:57:03.842720+00:00",
+      "license_files": [
+        "external/upstream/splash/LICENSE"
+      ],
+      "license_review": "root_text_reviewed; transitive and directory-level review pending"
+    }
+  ]
+}

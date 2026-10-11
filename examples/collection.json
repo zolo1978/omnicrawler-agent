@@ -1,0 +1,11 @@
+{
+  "goal": "监控获准产品目录的价格和新品",
+  "urls": ["https://example.com/products"],
+  "allowed_hosts": ["example.com"],
+  "item_selector": "article.product",
+  "id_attribute": "data-id",
+  "fields": {"name": ".name", "price": ".price", "currency": ".currency"},
+  "engine": "auto",
+  "max_pages": 100,
+  "delay": 1
+}
