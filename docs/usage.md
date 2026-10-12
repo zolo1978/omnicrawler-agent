@@ -36,6 +36,36 @@ Playwright 本版只渲染已获取 HTML 中的内联脚本；浏览器断网、
 
 discovery 可设置 links/sitemap/rss；seed URL 指向链接页、站点地图或 RSS，发现候选仍限于白名单。只做一层发现，达到预算截断时标记不完整，不能推断删除。使用同一数据库与相同配置建立可比历史；配置范围改变会建立新基线。
 
+## 外部来源适配器（自有账号监控）
+
+除受控 HTTP 采集外，也可以把某个外部工具当作**取数来源**：取数交给它，OmniCrawler 只负责证据、快照、变化与报告。首个适配器针对小红书，读取**你自己账号**的笔记与互动数据。
+
+```sh
+# 1. 先启动 xiaohongshu-mcp 并扫码登录（数据由它取，不由 OmniCrawler 取）
+# 2. 用 --probe 确认字段路径：不同部署的返回结构可能不同
+OMNICRAWLER_XHS_SCOPE_TOKEN=<xsec_token> \
+  uv run omnicrawler source source-config.json --probe <feed_id>
+# 3. 采集并出报告
+OMNICRAWLER_XHS_SCOPE_TOKEN=<xsec_token> \
+  uv run omnicrawler source source-config.json --db data/xhs.sqlite \
+  --report-dir data/xhs --format md --format json
+```
+
+配置里的 `fields` 是适配器返回 JSON 的点路径（不是 CSS 选择器）；`tags[]` 会把列表拼接成一个字段：
+
+```json
+{ "kind": "xhs", "account": "<user_id>", "endpoint": "http://127.0.0.1:18060/mcp", "limit": 20,
+  "fields": { "title": "note.title", "liked": "interactInfo.likedCount", "tags": "tags[]" } }
+```
+
+环境变量：`OMNICRAWLER_XHS_MCP_URL`（默认 `http://127.0.0.1:18060/mcp`）、`OMNICRAWLER_XHS_SCOPE_TOKEN`（或 `--scope-token`）。
+
+**边界（务必知情）**：这条路径的取数发生在外部工具内部，因此 OmniCrawler 的域名白名单、robots、DNS 复检、限速与响应预算**都不适用**。每次运行都会带 `external_retrieval` 告警、`engine` 记为 `source:xhs`，报告同样显示；会话令牌只作为请求参数，不写入数据库、快照或报告。
+
+安全默认值：范围为空 → `source_empty_scope`；被 `limit` 截断 → `source_scope_truncated`；两者都**不做删除推断**（"工具坏了"与"账号没内容"不能靠猜区分）。枚举失败/未登录 → `source_unavailable` / `source_not_authenticated`，状态 partial。字段全部解析不出 → 该条 `entity_unresolved`；部分解析不出 → `field_missing` 告警，其余字段与变化检测保留。
+
+适配器只读自有账号；不采集他人内容、评论正文或评论者信息，也不执行点赞/评论/发布等写操作。
+
 ## REST
 
 在本地设置 OMNICRAWLER_API_KEY 为安全随机密钥，不写入源码或查询参数。执行 `uv run --extra crawl4ai omnicrawler serve --db data/omnicrawler.sqlite --allow-host 已授权域名`。默认只绑定 127.0.0.1:8000，单 worker，不提供未鉴权文档页面。

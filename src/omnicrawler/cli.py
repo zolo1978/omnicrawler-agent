@@ -25,6 +25,27 @@ def use_utf8_streams():
             reconfigure(encoding="utf-8")
 
 
+async def render_run_reports(store, payload, report_dir, formats):
+    """Synthesize and deliver one run's report set under the guided-run contract.
+
+    Shared by `collect` and `source` so neither can quietly skip the inference
+    layer that a configured provider is expected to feed.
+    """
+    from omnicrawler.provider import provider_from_env
+    from omnicrawler.report import build_report, deliver
+    from omnicrawler.synthesis import synthesize
+
+    claims, synthesis_warnings = await synthesize(
+        store=store, result=payload, provider=provider_from_env()
+    )
+    report = build_report(store, payload, inferences=claims)
+    manifest = await deliver(
+        report, report_dir, formats or ["md", "docx", "pdf", "json"]
+    )
+    manifest["warnings"].extend(str(warning) for warning in synthesis_warnings)
+    return manifest
+
+
 def main():
     use_utf8_streams()
     parser = argparse.ArgumentParser(prog="omnicrawler")
@@ -45,6 +66,27 @@ def main():
     replay.add_argument("snapshot_id")
     replay.add_argument("url")
     replay.add_argument("--db", type=Path, default=Path("data/omnicrawler.sqlite"))
+    source = commands.add_parser(
+        "source",
+        help="Monitor an external adapter's authorized scope (for example your own "
+        "Xiaohongshu account)",
+    )
+    source.add_argument("config", type=Path)
+    source.add_argument("--db", type=Path, default=Path("data/omnicrawler.sqlite"))
+    source.add_argument("--report-dir", type=Path)
+    source.add_argument(
+        "--format", action="append", choices=["md", "docx", "pdf", "json"]
+    )
+    source.add_argument(
+        "--scope-token",
+        help="Session token for the authorized account (default: "
+        "OMNICRAWLER_XHS_SCOPE_TOKEN); never written to the database or a report",
+    )
+    source.add_argument(
+        "--probe",
+        metavar="FEED_ID",
+        help="Print one note's raw adapter payload so field paths can be confirmed",
+    )
     demo = commands.add_parser("demo")
     demo.add_argument("--output", type=Path, default=Path("data/demo"))
     serve = commands.add_parser("serve")
@@ -73,29 +115,49 @@ def main():
         result = asyncio.run(collect(config, SnapshotStore(args.db)))
         payload = result.model_dump(mode="json")
         if args.report_dir:
-            from omnicrawler.provider import provider_from_env
-            from omnicrawler.report import build_report, deliver
-            from omnicrawler.synthesis import synthesize
-
-            store = SnapshotStore(args.db)
             # Same delivery contract as a guided run: a configured provider is used
             # here too, so `collect --report-dir` cannot hand back a report whose
             # inference section says "not enabled" while one is configured.
-            claims, synthesis_warnings = asyncio.run(
-                synthesize(store=store, result=payload, provider=provider_from_env())
-            )
-            report = build_report(store, payload, inferences=claims)
-            manifest = asyncio.run(
-                deliver(
-                    report,
-                    args.report_dir,
-                    args.format or ["md", "docx", "pdf", "json"],
+            payload["delivery"] = asyncio.run(
+                render_run_reports(
+                    SnapshotStore(args.db), payload, args.report_dir, args.format
                 )
             )
-            manifest["warnings"].extend(str(warning) for warning in synthesis_warnings)
-            # One JSON document on stdout, so a consumer never has to split
-            # concatenated documents to find the run result.
-            payload["delivery"] = manifest
+        # One JSON document on stdout, so a consumer never has to split
+        # concatenated documents to find the run result.
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        if result.status != "succeeded":
+            raise SystemExit(2)
+    elif args.command == "source":
+        from omnicrawler.source import SourceConfig, collect_from_source
+        from omnicrawler.xhs import adapter_for, scope_token_from_env
+
+        config = SourceConfig.model_validate_json(
+            args.config.read_text(encoding="utf-8")
+        )
+        # The session token is operator-supplied state, never part of the config
+        # file, so it cannot be committed with the scope definition by accident.
+        token = args.scope_token or scope_token_from_env()
+        adapter = adapter_for(config, scope_token=token)
+        if args.probe:
+            print(
+                json.dumps(
+                    asyncio.run(adapter.probe(args.probe, token)),
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+            return
+        result = asyncio.run(
+            collect_from_source(config, SnapshotStore(args.db), adapter)
+        )
+        payload = result.model_dump(mode="json")
+        if args.report_dir:
+            payload["delivery"] = asyncio.run(
+                render_run_reports(
+                    SnapshotStore(args.db), payload, args.report_dir, args.format
+                )
+            )
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         if result.status != "succeeded":
             raise SystemExit(2)

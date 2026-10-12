@@ -19,6 +19,16 @@
 
 config/upstreams.json 是研究候选清单，不是已集成依赖清单。Firecrawl 的 AGPL-3.0 源码未纳入当前实现；后续接入或分发须按实际目录和组合重新审查。用户提供的第三方参考原稿、归档副本及采集数据不在公开提交范围内，也不受主项目许可授权。
 
+## 可选的外部适配器（进程外，不随本仓库分发）
+
+`omnicrawler source` 可把外部工具当作取数来源，通过各自公开接口调用，不链接、不再分发其代码；未安装时该子命令不可用，其余功能不受影响。
+
+| 适配器 | 上游 | 上游许可 | 接入方式 | 状态 |
+| --- | --- | --- | --- | --- |
+| xhs | xpzouying/xiaohongshu-mcp | Apache-2.0 | 进程外 MCP over HTTP（默认 `http://127.0.0.1:18060/mcp`） | 协议与安全语义已用回环 mock 验证；**未对真实服务验证**（需扫码登录的账号环境） |
+
+已评估但**未接入**：NanmiCoder/MediaCrawler（66.7k star，许可为自定义的 NON-COMMERCIAL LEARNING LICENSE 1.1，明文禁止商用与大规模采集，与本项目的 Apache-2.0 定位不兼容）、JoeanAmier/XHS-Downloader（GPL-3.0，链接会传染）。两者仅作研究记录，源码与产物均未纳入。
+
 报告测试使用 pypdf 6.20.0（BSD-3-Clause）验证 PDF 中文文本；它只属于开发依赖。Linux PDF 部署需系统 Noto CJK 字体（SIL Open Font License 1.1）；字体不随本项目分发。
 
 ## 文档设计参考（非运行时依赖）

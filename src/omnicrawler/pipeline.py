@@ -256,6 +256,55 @@ async def _resolve_sources(config, client) -> tuple[list[str], list[CollectError
     return urls, errors
 
 
+def save_run(
+    store,
+    *,
+    coverage: str,
+    detail: Coverage,
+    records: dict[str, Record],
+    fetches: list[dict],
+    observations: list[Record],
+    errors: list[CollectError],
+    warnings: list[CollectError],
+    engine: str,
+    goal: str,
+    route_reason: str,
+    raw_html_stored: bool = False,
+) -> Snapshot:
+    """Persist one run's snapshot and evidence bundle.
+
+    Every retriever (the controlled HTTP collector and an external source
+    adapter) writes through here, so the bundle keys the report and the
+    synthesis layer read can never drift between paths.
+    """
+    identifier = str(uuid4())
+    snap = Snapshot(
+        identifier,
+        coverage,
+        {key: record.fields for key, record in records.items()},
+        detail.complete,
+        detail.model_dump(mode="json"),
+    )
+    bundle = {
+        "snapshot_id": identifier,
+        "coverage": coverage,
+        "coverage_detail": detail.model_dump(mode="json"),
+        "complete": snap.complete,
+        "created_at": datetime.now(UTC).isoformat(),
+        "records": [record.model_dump(mode="json") for record in records.values()],
+        "fetches": fetches,
+        "errors": [error.model_dump(mode="json") for error in errors],
+        "warnings": [warning.model_dump(mode="json") for warning in warnings],
+        "raw_html_stored": raw_html_stored,
+        "claims": assess(observations),
+        "goal": goal,
+        "engine": engine,
+        "route_reason": route_reason,
+    }
+    store.save_bundle(snap, bundle)
+    return snap
+
+
 async def collect(config: CollectionConfig, store) -> CollectionResult:
     errors: list[CollectError] = []
     warnings: list[CollectError] = []
@@ -474,7 +523,6 @@ async def collect(config: CollectionConfig, store) -> CollectionResult:
             follow = next_page_url(config.pagination, page.url, page.html, page_index)
             if follow is not None and follow not in seen:
                 work.append((follow, page_index + 1))
-    identifier = str(uuid4())
     coverage_detail = Coverage(
         planned_pages=planned,
         fetched_pages=fetched,
@@ -482,34 +530,25 @@ async def collect(config: CollectionConfig, store) -> CollectionResult:
         complete=not errors and not truncated,
         warnings=warnings,
     )
-    snap = Snapshot(
-        identifier,
-        coverage,
-        {key: record.fields for key, record in records.items()},
-        coverage_detail.complete,
-        coverage_detail.model_dump(mode="json"),
-    )
-    bundle = {
-        "snapshot_id": identifier,
-        "coverage": coverage,
-        "coverage_detail": coverage_detail.model_dump(mode="json"),
-        "complete": snap.complete,
-        "created_at": datetime.now(UTC).isoformat(),
-        "records": [record.model_dump(mode="json") for record in records.values()],
-        "fetches": fetches,
-        "errors": [error.model_dump(mode="json") for error in errors],
-        "warnings": [warning.model_dump(mode="json") for warning in warnings],
-        "raw_html_stored": config.store_raw_html,
-        "claims": assess(observations),
-        "goal": config.goal,
-        "engine": selected_engine,
-        "route_reason": {
+    snap = save_run(
+        store,
+        coverage=coverage,
+        detail=coverage_detail,
+        records=records,
+        fetches=fetches,
+        observations=observations,
+        errors=errors,
+        warnings=warnings,
+        engine=selected_engine,
+        goal=config.goal,
+        route_reason={
             "html": "deterministic HTML extraction",
             "playwright": "explicit inline-script rendering",
             "crawl4ai": "explicit Crawl4AI content parsing",
         }[selected_engine],
-    }
-    store.save_bundle(snap, bundle)
+        raw_html_stored=config.store_raw_html,
+    )
+    identifier = snap.id
     changes = store.compare(previous.id, identifier) if previous is not None else ()
     status = "blocked" if blocked else "partial" if errors else "succeeded"
     return CollectionResult(
