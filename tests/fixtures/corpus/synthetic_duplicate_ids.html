@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Synthetic: duplicate entity ids</title></head>
+<body>
+<h1>Listing with a duplicated identity</h1>
+<!-- The same data-id appears twice with different values.  One of the two is
+     wrong and the crawler cannot tell which, so the snapshot must be reported
+     as non-comparable instead of silently picking a winner. -->
+<article data-id="D1"><span class="name">First</span><span class="price">10</span></article>
+<article data-id="D2"><span class="name">Second</span><span class="price">20</span></article>
+<article data-id="D1"><span class="name">First (restated)</span><span class="price">99</span></article>
+</body>
+</html>

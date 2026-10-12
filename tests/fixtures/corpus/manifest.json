@@ -1,0 +1,149 @@
+{
+  "pages": {
+    "developer-mozilla-org-en-us-docs-web-accessibility-aria-attributes": {
+      "bytes": 195092,
+      "content_type": "text/html",
+      "fetched_at": "2026-10-12T04:38:04+00:00",
+      "final_url": "https://developer.mozilla.org/en-US/docs/Web/Accessibility/ARIA/Reference/Attributes",
+      "gzip_bytes": 25515,
+      "http_status": 200,
+      "path": "developer-mozilla-org-en-us-docs-web-accessibility-aria-attributes.html.gz",
+      "sha256": "4ec10ce5b2038725379e7394dd9a02847bdc5f007af4f3c0209e32fa178ff5f8",
+      "slug": "developer-mozilla-org-en-us-docs-web-accessibility-aria-attributes",
+      "url": "https://developer.mozilla.org/en-US/docs/Web/Accessibility/ARIA/Attributes"
+    },
+    "developer-mozilla-org-en-us-docs-web-css-css-selectors": {
+      "bytes": 338009,
+      "content_type": "text/html",
+      "fetched_at": "2026-10-12T04:38:06+00:00",
+      "final_url": "https://developer.mozilla.org/en-US/docs/Web/CSS/Guides/Selectors",
+      "gzip_bytes": 36808,
+      "http_status": 200,
+      "path": "developer-mozilla-org-en-us-docs-web-css-css-selectors.html.gz",
+      "sha256": "bff32b9e631b18e33e9a6c8e12c4efed155910ce2c78a53ce7bd27b3e9286804",
+      "slug": "developer-mozilla-org-en-us-docs-web-css-css-selectors",
+      "url": "https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_selectors"
+    },
+    "developer-mozilla-org-en-us-docs-web-http-methods": {
+      "bytes": 214265,
+      "content_type": "text/html",
+      "fetched_at": "2026-10-12T04:38:03+00:00",
+      "final_url": "https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Methods",
+      "gzip_bytes": 25102,
+      "http_status": 200,
+      "path": "developer-mozilla-org-en-us-docs-web-http-methods.html.gz",
+      "sha256": "560f5b76d55dc743e5826890ea3979dacd49c7d014387cc8f387f1d80ad21606",
+      "slug": "developer-mozilla-org-en-us-docs-web-http-methods",
+      "url": "https://developer.mozilla.org/en-US/docs/Web/HTTP/Methods"
+    },
+    "developer-mozilla-org-en-us-docs-web-http-status": {
+      "bytes": 234552,
+      "content_type": "text/html",
+      "fetched_at": "2026-10-12T04:38:02+00:00",
+      "final_url": "https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Status",
+      "gzip_bytes": 31600,
+      "http_status": 200,
+      "path": "developer-mozilla-org-en-us-docs-web-http-status.html.gz",
+      "sha256": "3d67cf5ea95bc0b4c79b60c91e6ec8a0292f2e2d8a2830c0637f83648f867ed9",
+      "slug": "developer-mozilla-org-en-us-docs-web-http-status",
+      "url": "https://developer.mozilla.org/en-US/docs/Web/HTTP/Status"
+    },
+    "docs-python-org-3-library-index-html": {
+      "bytes": 74036,
+      "content_type": "text/html",
+      "fetched_at": "2026-10-12T04:41:05+00:00",
+      "final_url": "https://docs.python.org/3/library/index.html",
+      "gzip_bytes": 11757,
+      "http_status": 200,
+      "path": "docs-python-org-3-library-index-html.html.gz",
+      "sha256": "b24f392e6b1e32b393f90b1da5b7db3412ff862d176d8de08b5408887787383c",
+      "slug": "docs-python-org-3-library-index-html",
+      "url": "https://docs.python.org/3/library/index.html"
+    },
+    "docs-python-org-3-py-modindex-html": {
+      "bytes": 89229,
+      "content_type": "text/html",
+      "fetched_at": "2026-10-12T04:38:00+00:00",
+      "final_url": "https://docs.python.org/3/py-modindex.html",
+      "gzip_bytes": 13579,
+      "http_status": 200,
+      "path": "docs-python-org-3-py-modindex-html.html.gz",
+      "sha256": "e6190e26c91334737496f6835a3280d8bfd506d0ee16bfeb0cf190b994fb085f",
+      "slug": "docs-python-org-3-py-modindex-html",
+      "url": "https://docs.python.org/3/py-modindex.html"
+    },
+    "en-wikipedia-org-wiki-list-of-dns-record-types": {
+      "bytes": 265567,
+      "content_type": "text/html; charset=UTF-8",
+      "fetched_at": "2026-10-12T04:38:11+00:00",
+      "final_url": "https://en.wikipedia.org/wiki/List_of_DNS_record_types",
+      "gzip_bytes": 43750,
+      "http_status": 200,
+      "path": "en-wikipedia-org-wiki-list-of-dns-record-types.html.gz",
+      "sha256": "ee316b6828cc190a15db86a0086dae54412c99a62b72920545a1e44bbd1900c1",
+      "slug": "en-wikipedia-org-wiki-list-of-dns-record-types",
+      "url": "https://en.wikipedia.org/wiki/List_of_DNS_record_types"
+    },
+    "en-wikipedia-org-wiki-list-of-http-header-fields": {
+      "bytes": 451637,
+      "content_type": "text/html; charset=UTF-8",
+      "fetched_at": "2026-10-12T04:38:44+00:00",
+      "final_url": "https://en.wikipedia.org/wiki/List_of_HTTP_header_fields",
+      "gzip_bytes": 66898,
+      "http_status": 200,
+      "path": "en-wikipedia-org-wiki-list-of-http-header-fields.html.gz",
+      "sha256": "7f6e7e705fd36fb71f1e4500ae53f0ed0dd4459ea3685043dd8357222e33f193",
+      "slug": "en-wikipedia-org-wiki-list-of-http-header-fields",
+      "url": "https://en.wikipedia.org/wiki/List_of_HTTP_header_fields"
+    },
+    "en-wikipedia-org-wiki-list-of-http-status-codes": {
+      "bytes": 411457,
+      "content_type": "text/html; charset=UTF-8",
+      "fetched_at": "2026-10-12T04:38:42+00:00",
+      "final_url": "https://en.wikipedia.org/wiki/List_of_HTTP_status_codes",
+      "gzip_bytes": 67661,
+      "http_status": 200,
+      "path": "en-wikipedia-org-wiki-list-of-http-status-codes.html.gz",
+      "sha256": "f455fca3fb90ed0c787ee145d230e716a8b4642075516cceb5634f744fa5f357",
+      "slug": "en-wikipedia-org-wiki-list-of-http-status-codes",
+      "url": "https://en.wikipedia.org/wiki/List_of_HTTP_status_codes"
+    },
+    "pkg-go-dev-std": {
+      "bytes": 271017,
+      "content_type": "text/html; charset=utf-8",
+      "fetched_at": "2026-10-12T04:38:18+00:00",
+      "final_url": "https://pkg.go.dev/std",
+      "gzip_bytes": 27872,
+      "http_status": 200,
+      "path": "pkg-go-dev-std.html.gz",
+      "sha256": "16c8cdad4e732dc19a43477f5f4a64963b5b755b75663dd6d69b063eb3569c3e",
+      "slug": "pkg-go-dev-std",
+      "url": "https://pkg.go.dev/std"
+    },
+    "postgresql-org-docs-release-15-0": {
+      "bytes": 136143,
+      "content_type": "text/html; charset=utf-8",
+      "fetched_at": "2026-10-12T04:38:16+00:00",
+      "final_url": "https://www.postgresql.org/docs/release/15.0/",
+      "gzip_bytes": 27783,
+      "http_status": 200,
+      "path": "postgresql-org-docs-release-15-0.html.gz",
+      "sha256": "403ca3c6632d33dfb648c52abb95604bb877efc8467f59d4b7479a10ffabdc36",
+      "slug": "postgresql-org-docs-release-15-0",
+      "url": "https://www.postgresql.org/docs/release/15.0/"
+    },
+    "postgresql-org-docs-release-16-0": {
+      "bytes": 145719,
+      "content_type": "text/html; charset=utf-8",
+      "fetched_at": "2026-10-12T04:38:13+00:00",
+      "final_url": "https://www.postgresql.org/docs/release/16.0/",
+      "gzip_bytes": 28160,
+      "http_status": 200,
+      "path": "postgresql-org-docs-release-16-0.html.gz",
+      "sha256": "b0b2cf64f96ffd1c425b7110285ad3f26710497c16037c8e3308f249918ac7e6",
+      "slug": "postgresql-org-docs-release-16-0",
+      "url": "https://www.postgresql.org/docs/release/16.0/"
+    }
+  },
+  "user_agent": "OmniCrawlerCorpus/0.1 (+local test-fixture recorder; single-request archival of public documentation pages)"
+}

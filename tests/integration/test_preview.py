@@ -91,3 +91,24 @@ def test_preview_selector_keeps_identity_filter_for_mixed_containers(site, tmp_p
     result = sessions.confirm(sid, value["revision"], actor="test")
     asyncio.run(sessions.manager.run(result["task_id"]))
     assert sessions.manager.get(result["task_id"])["status"] == "succeeded"
+
+
+def test_nomination_is_a_proposal_until_explicitly_accepted(site, tmp_path):
+    origin, state = site
+    sessions = SessionStore(
+        TaskService(tmp_path / "db.sqlite"),
+        allowed_hosts={"127.0.0.1"},
+        local_origins={origin},
+    )
+    sid = sessions.start()["id"]
+    value = sessions.answer(
+        sid, {"task_type": "once", "goal": "价格", "fields": {"price": ".price"}}
+    )
+    assert "source" in value["draft"]["unknowns"]
+    with pytest.raises(ValueError):
+        sessions.answer(sid, {"accept_nomination": True})
+    assert "source" not in sessions.get(sid)["answers"]
+    with pytest.raises(ValueError):
+        sessions.answer(sid, {"accept_nomination": "yes"})
+    assert sessions.get(sid)["nominations"] is None
+    assert not state["hits"]

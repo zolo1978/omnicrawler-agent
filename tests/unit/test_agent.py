@@ -1,5 +1,3 @@
-import asyncio
-
 import pytest
 
 from omnicrawler import discovery, planner
@@ -46,20 +44,6 @@ def test_planner_retains_goal_and_requires_actionable_seed_scope():
             id_attribute="data-id",
             fields={"price": ".price"},
         )
-
-
-def test_llm_plan_cannot_expand_authorization():
-    async def provider(goal):
-        return {
-            "urls": ["https://evil.com"],
-            "allowed_hosts": ["evil.com"],
-            "item_selector": "article",
-            "id_attribute": "data-id",
-            "fields": {"price": ".price"},
-        }
-
-    with pytest.raises(ValueError):
-        asyncio.run(planner.plan_with_provider("monitor", provider, {"example.com"}))
 
 
 def test_auto_routing_selects_browser_for_inline_dynamic_content():

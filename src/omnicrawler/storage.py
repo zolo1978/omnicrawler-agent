@@ -1,5 +1,6 @@
 """Transactional immutable snapshots and idempotent pair comparison."""
 
+import gzip
 import json
 import sqlite3
 from contextlib import contextmanager
@@ -24,6 +25,13 @@ class SnapshotStore:
                     new_id TEXT NOT NULL REFERENCES snapshots(id),
                     entity_id TEXT NOT NULL, payload TEXT NOT NULL,
                     PRIMARY KEY(old_id, new_id, entity_id)
+                );
+                CREATE TABLE IF NOT EXISTS collection_engines (
+                    coverage TEXT PRIMARY KEY, engine TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS raw_documents (
+                    sha256 TEXT PRIMARY KEY, url TEXT NOT NULL,
+                    captured_at TEXT NOT NULL, content BLOB NOT NULL
                 );
             """)
 
@@ -92,6 +100,75 @@ class SnapshotStore:
                 return snapshot
         return None
 
+    def engine_for(self, coverage: str) -> str | None:
+        """The first engine resolved for a coverage wins for every later run."""
+        with self._connection() as conn:
+            row = conn.execute(
+                "SELECT engine FROM collection_engines WHERE coverage=?", (coverage,)
+            ).fetchone()
+        return row[0] if row else None
+
+    def pin_engine(self, coverage: str, engine: str) -> str:
+        with self._connection() as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO collection_engines VALUES (?, ?)",
+                (coverage, engine),
+            )
+            row = conn.execute(
+                "SELECT engine FROM collection_engines WHERE coverage=?", (coverage,)
+            ).fetchone()
+        return row[0]
+
+    def save_document(
+        self, *, digest: str, url: str, captured_at: str, html: str
+    ) -> None:
+        """Opt-in raw retention, keyed by content hash so repeats store once."""
+        blob = gzip.compress(html.encode("utf-8"), compresslevel=6)
+        with self._connection() as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO raw_documents VALUES (?, ?, ?, ?)",
+                (digest, url, captured_at, blob),
+            )
+
+    def raw_for_fetch(self, snapshot_id: str, url: str) -> dict | None:
+        """Replay the stored document behind one fetch of a snapshot."""
+        digest = None
+        for fetch in self.bundle(snapshot_id).get("fetches", []):
+            if url in {fetch.get("url"), fetch.get("requested_url")}:
+                digest = fetch.get("hash")
+                break
+        if not digest:
+            return None
+        with self._connection() as conn:
+            row = conn.execute(
+                "SELECT url, captured_at, content FROM raw_documents WHERE sha256=?",
+                (digest,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "url": row[0],
+            "captured_at": row[1],
+            "html": gzip.decompress(row[2]).decode("utf-8", errors="replace"),
+        }
+
+    def _prune_documents(self) -> int:
+        """Drop raw documents no surviving bundle references any more."""
+        with self._connection() as conn:
+            referenced = set()
+            for (payload,) in conn.execute("SELECT payload FROM bundles").fetchall():
+                for fetch in json.loads(payload).get("fetches", []):
+                    if fetch.get("hash"):
+                        referenced.add(fetch["hash"])
+            orphaned = [
+                row[0]
+                for row in conn.execute("SELECT sha256 FROM raw_documents").fetchall()
+                if row[0] not in referenced
+            ]
+            for digest in orphaned:
+                conn.execute("DELETE FROM raw_documents WHERE sha256=?", (digest,))
+        return len(orphaned)
+
     def save_bundle(self, snapshot: Snapshot, bundle: dict) -> None:
         # Bundle and snapshot are committed together; no partially stored evidence.
         payload = json.dumps(asdict(snapshot), sort_keys=True, allow_nan=False)
@@ -127,7 +204,7 @@ class SnapshotStore:
             raise KeyError(snapshot_id)
         return json.loads(row[0])
 
-    def delete(self, snapshot_id: str) -> None:
+    def delete(self, snapshot_id: str, *, prune: bool = True) -> None:
         with self._connection() as conn:
             tables = {
                 row[0]
@@ -167,6 +244,8 @@ class SnapshotStore:
                             (identifier,),
                         )
                         self._delete_report_files(identifier)
+        if prune:
+            self._prune_documents()
 
     def _delete_report_files(self, identifier):
         import shutil
@@ -196,7 +275,8 @@ class SnapshotStore:
             if datetime.fromisoformat(json.loads(payload)["created_at"]) < cutoff
         ]
         for identifier in expired:
-            self.delete(identifier)
+            self.delete(identifier, prune=False)
+        self._prune_documents()
         self._clear_previews(cutoff=cutoff)
         return len(expired)
 
@@ -304,6 +384,7 @@ class SnapshotStore:
             if entity_match or source_match:
                 matches.append(identifier)
         for identifier in matches:
-            self.delete(identifier)
+            self.delete(identifier, prune=False)
+        self._prune_documents()
         self._clear_previews(entity_id=entity_id, source_url=source_url)
         return len(matches)

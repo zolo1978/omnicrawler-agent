@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="zh">
+<head><meta charset="gbk"><title>合成：GBK 编码列表</title></head>
+<body>
+<h1>编目列表</h1>
+<!-- The page declares GBK and the bytes really are GBK, but the response header
+     claims no charset at all.  The transport decodes with utf-8/errors=replace, so
+     every non-ASCII byte collapses to U+FFFD and the run still reports success. -->
+<article data-id="G1"><span class="name">中文名称一</span><span class="price">10</span></article>
+<article data-id="G2"><span class="name">中文名称二</span><span class="price">20</span></article>
+<article data-id="G3"><span class="name">中文名称三</span><span class="price">30</span></article>
+</body>
+</html>

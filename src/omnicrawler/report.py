@@ -4,6 +4,7 @@ import html
 import json
 import os
 import re
+from dataclasses import asdict, is_dataclass
 from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
@@ -12,6 +13,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
+from omnicrawler import models
 from omnicrawler.governance import sanitize
 from omnicrawler.report_design import THEME
 
@@ -29,7 +31,12 @@ class Report(BaseModel):
     sources: list[str] = Field(default_factory=list)
     schedule_seconds: int | None = None
     facts: list[str] = Field(default_factory=list)
-    inferences: list[str] = Field(default_factory=list)
+    # Model conclusions, each carrying the stored Evidence that proves it. The
+    # contract, not the prompt, is what keeps an unsupported sentence out.
+    inferences: list[models.Claim] = Field(default_factory=list)
+    coverage: dict = Field(default_factory=dict)
+    errors: list[models.CollectError] = Field(default_factory=list)
+    warnings: list[models.CollectError] = Field(default_factory=list)
     status: str = "succeeded"
     snapshot_id: str | None = None
 
@@ -91,6 +98,15 @@ def _clean(value):
     return value
 
 
+def _as_dict(value):
+    """Accept stored JSON, dataclasses, or pydantic models for one concept."""
+    if isinstance(value, dict):
+        return value
+    if hasattr(value, "model_dump"):
+        return value.model_dump(mode="json")
+    return asdict(value) if is_dataclass(value) else dict(value)
+
+
 def build_report(
     store,
     result: dict,
@@ -98,6 +114,7 @@ def build_report(
     task_type="once",
     schedule_seconds=None,
     title="OmniCrawler 报告",
+    inferences=None,
 ) -> Report:
     identifier = result.get("snapshot_id")
     bundle = store.bundle(identifier) if identifier else {}
@@ -106,10 +123,7 @@ def build_report(
     old_records = store.bundle(previous).get("records", []) if previous else []
     changes = []
     for change in result.get("changes", []):
-        if not isinstance(change, dict):
-            from dataclasses import asdict
-
-            change = asdict(change)
+        change = _as_dict(change)
         entity = change["entity_id"]
         changes.append(
             {
@@ -170,7 +184,22 @@ def build_report(
                 "sources": sorted(sources),
                 "schedule_seconds": schedule_seconds,
                 "facts": facts,
-                "inferences": [],
+                # Normalise before redaction: inference text is model-authored.
+                "inferences": [
+                    models.Claim.model_validate(claim).model_dump(mode="json")
+                    for claim in (inferences or [])
+                ],
+                "coverage": bundle.get("coverage_detail") or {},
+                "errors": [
+                    _as_dict(error)
+                    for error in (bundle.get("errors") or result.get("errors") or [])
+                ],
+                "warnings": [
+                    _as_dict(warning)
+                    for warning in (
+                        bundle.get("warnings") or result.get("warnings") or []
+                    )
+                ],
                 "status": result.get("status", "unknown"),
                 "snapshot_id": identifier,
             }
@@ -312,6 +341,35 @@ def _reader_change(change):
     return _readable(visible)
 
 
+def _reader_inference(claim):
+    """A model conclusion is only readable next to the proof it cites."""
+    return (
+        str(claim.get("text", ""))
+        + "；来源依据："
+        + _evidence_summary(claim.get("evidence", []))
+    )
+
+
+def _coverage_line(coverage):
+    planned = coverage.get("planned_pages", 0)
+    fetched = coverage.get("fetched_pages", 0)
+    parts = [f"计划页面：{planned}；实际抓取：{fetched}"]
+    if coverage.get("truncated"):
+        parts.append("分页被预算截断")
+    parts.append("范围完整：" + ("是" if coverage.get("complete") else "否"))
+    return "；".join(parts)
+
+
+def _reader_deviation(deviation, prefix="错误"):
+    """Operators need the stable code, not a prose apology, to triage a run."""
+    text = f"{prefix}：{deviation.get('code')} · {deviation.get('message')}"
+    if deviation.get("url"):
+        text += f" · {deviation['url']}"
+    if deviation.get("retryable"):
+        text += " · 可重试"
+    return text
+
+
 def _lines(report: Report) -> list[tuple[str, str]]:
     data = _clean(report.model_dump(mode="json"))
     lines = [
@@ -324,11 +382,20 @@ def _lines(report: Report) -> list[tuple[str, str]]:
         ),
         ("heading", "汇总"),
         ("text", _readable(data["summary"])),
-        ("heading", "事实"),
     ]
+    if data["coverage"] or data["errors"] or data["warnings"]:
+        lines.append(("heading", "采集范围与运行告警"))
+        if data["coverage"]:
+            lines.append(("text", _coverage_line(data["coverage"])))
+        lines.extend(("text", _reader_deviation(error)) for error in data["errors"])
+        lines.extend(
+            ("text", _reader_deviation(warning, prefix="告警"))
+            for warning in data["warnings"]
+        )
+    lines.append(("heading", "事实"))
     lines.extend(("text", fact) for fact in data["facts"])
     lines.append(("heading", "推断"))
-    lines.extend(("text", inference) for inference in data["inferences"])
+    lines.extend(("text", _reader_inference(claim)) for claim in data["inferences"])
     if not data["inferences"]:
         lines.append(("text", "无推断；来源独立性未验证。"))
     lines.append(("heading", "记录与证据"))
@@ -481,21 +548,43 @@ def render_docx(report: Report) -> bytes:
     return output.getvalue()
 
 
-def cjk_font_family() -> str | None:
-    roots = [
+def _cjk_font_roots() -> list[Path]:
+    """Font roots, most specific platform first.
+
+    Windows roots are prepended because ``%WINDIR%/Fonts`` does not exist on
+    macOS/Linux and vice versa, so the pre-existing fallback order is unchanged
+    on the platforms it was written for.
+    """
+    roots = []
+    windir = os.environ.get("WINDIR")
+    if windir:
+        roots.append(Path(windir) / "Fonts")
+    local = os.environ.get("LOCALAPPDATA")
+    if local:
+        # Per-user installs land here and are absent from %WINDIR%/Fonts.
+        roots.append(Path(local) / "Microsoft" / "Windows" / "Fonts")
+    roots += [
         Path("/System/Library/Fonts"),
         Path("/System/Library/AssetsV2"),
         Path("/usr/share/fonts"),
         Path("/usr/local/share/fonts"),
         Path.home() / ".local/share/fonts",
     ]
+    return roots
+
+
+def cjk_font_family() -> str | None:
     for pattern, family in [
         ("NotoSansCJK*", "Noto Sans CJK SC"),
         ("NotoSerifCJK*", "Noto Serif CJK SC"),
         ("STHeiti Medium.ttc", "STHeiti"),
         ("PingFang*", "PingFang SC"),
+        # Windows ships no Noto; these are the families the docx path also names.
+        ("msyh*.ttc", "Microsoft YaHei"),
+        ("simsun*.ttf", "SimSun"),
+        ("simhei*.ttf", "SimHei"),
     ]:
-        for root in roots:
+        for root in _cjk_font_roots():
             if root.exists() and next(root.rglob(pattern), None) is not None:
                 return family
     return None
@@ -509,14 +598,38 @@ def _pdf_html(report: Report, family: str) -> str:
         for key, value in data["summary"].items()
     )
     sections = []
-    for title, values in [
-        ("核心发现 · 事实", data["facts"]),
-        ("分析与行动 · 推断", data["inferences"]),
+    if data["coverage"] or data["errors"] or data["warnings"]:
+        deviations = [
+            f'<p class="deviation">{esc(_reader_deviation(error))}</p>'
+            for error in data["errors"]
+        ] + [
+            f'<p class="deviation">{esc(_reader_deviation(warning, prefix="告警"))}</p>'
+            for warning in data["warnings"]
+        ]
+        sections.append(
+            "<section><h2>采集范围与运行告警</h2>"
+            + (
+                f"<p>{esc(_coverage_line(data['coverage']))}</p>"
+                if data["coverage"]
+                else ""
+            )
+            + "".join(deviations)
+            + "</section>"
+        )
+    for title, findings in [
+        (
+            "核心发现 · 事实",
+            [esc(fact) for fact in data["facts"]],
+        ),
+        (
+            "分析与行动 · 推断",
+            [esc(_reader_inference(claim)) for claim in data["inferences"]],
+        ),
     ]:
         content = (
             "".join(
-                f'<article class="finding"><p class="{("lead" if i <= 3 else "")}">{esc(text)}</p></article>'
-                for i, text in enumerate(values, 1)
+                f'<article class="finding"><p class="{("lead" if i <= 3 else "")}">{text}</p></article>'
+                for i, text in enumerate(findings, 1)
             )
             or "<p>暂无内容。</p>"
         )
@@ -585,7 +698,7 @@ def _pdf_html(report: Report, family: str) -> str:
     .source-group {break-inside:avoid}
     .compact {display:grid; grid-template-columns:1fr 1fr; gap:0 20px}
     .compact .field {grid-template-columns:70px 1fr; margin:4px 0}
-    .field b {color:#5b6f82; font-size:11pt} .evidence,.note,.source {font-size:10.5pt; color:#5b6f82; line-height:1.7}
+    .field b {color:#5b6f82; font-size:11pt} .evidence,.note,.source,.deviation {font-size:10.5pt; color:#5b6f82; line-height:1.7}
     .evidence {background:#f3f6f9; padding:12px; border-radius:3px; margin-top:14px} .source {break-inside:avoid; padding-bottom:10px; border-bottom:1px solid #e6edf2}
     """
     for original, replacement in {

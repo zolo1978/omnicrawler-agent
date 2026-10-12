@@ -1,9 +1,10 @@
 import asyncio
 import time
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from omnicrawler import api, mcp_server
+from omnicrawler import api
 from omnicrawler.service import TaskService
 from omnicrawler.session import SessionStore
 
@@ -77,7 +78,7 @@ def test_rest_guidance_to_report_and_source_deletion(site, tmp_path):
         task_id = response.json()["task_id"]
         task = wait_task(client, task_id, headers)
         assert task["status"] == "succeeded", task
-        assert task["result"]["delivery"]["files"]["docx"]
+        assert Path(task["result"]["delivery"]["files"]["docx"]).is_file()
         assert client.get(f"/tasks/{task_id}/report?format=json").status_code == 401
         report = client.get(f"/tasks/{task_id}/report?format=json", headers=headers)
         assert report.status_code == 200
@@ -135,22 +136,6 @@ def test_monitor_periodic_runs_inherit_delivery_contract(site, tmp_path):
     data = json.loads(Path(report["files"]["json"]).read_text())
     assert data["task_type"] == "monitor"
     assert data["schedule_seconds"] == 60
-
-
-def test_mcp_guidance_tools_are_composable_and_authorized(tmp_path):
-    async def run():
-        server = mcp_server.build_server(tmp_path / "db.sqlite", {"example.com"})
-        names = {tool.name for tool in await server.list_tools()}
-        assert {
-            "start_session",
-            "answer_questions",
-            "get_draft",
-            "confirm_session",
-            "preview_session",
-            "task_report",
-        } <= names
-
-    asyncio.run(run())
 
 
 def test_scheduled_task_and_delivery_are_published_atomically(

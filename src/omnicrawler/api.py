@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from omnicrawler.pipeline import CollectionConfig, select_engine
 from omnicrawler.provider import provider_from_env
+from omnicrawler.search import search_from_env
 from omnicrawler.service import TaskService, worker_lock
 from omnicrawler.session import SessionStore
 
@@ -38,13 +39,17 @@ class Confirmation(BaseModel):
 def create_app(path: Path, api_key: str, *, allowed_hosts=(), local_origins=()):
     if not api_key:
         raise ValueError("API key is required")
-    manager = TaskService(path)
+    # One provider object serves guidance previews and report synthesis, so a
+    # single environment configuration governs both model touchpoints.
+    provider = provider_from_env()
+    manager = TaskService(path, provider=provider)
     allowed_hosts, local_origins = set(allowed_hosts), set(local_origins)
     sessions = SessionStore(
         manager,
         allowed_hosts=allowed_hosts,
         local_origins=local_origins,
-        provider=provider_from_env(),
+        provider=provider,
+        search=search_from_env(),
     )
 
     @asynccontextmanager
@@ -111,6 +116,31 @@ def create_app(path: Path, api_key: str, *, allowed_hosts=(), local_origins=()):
             return await sessions.preview(identifier)
         except (KeyError, ValueError) as exc:
             guidance_error(exc)
+
+    @app.post("/sessions/{identifier}/nominate", dependencies=secured)
+    async def nominate_sources(identifier: str):
+        try:
+            # Resolve the session first so an unknown identifier stays a 404 even
+            # when the nomination backend itself is unconfigured.
+            sessions.get(identifier)
+        except KeyError:
+            raise HTTPException(404, "Unknown session or expired result") from None
+        try:
+            value = await sessions.nominate(identifier)
+        except KeyError:
+            raise HTTPException(404, "Unknown session or expired result") from None
+        except ValueError as exc:
+            # Nomination failures are operator-actionable (no backend configured,
+            # goal unanswered, or every candidate rejected), so the reason travels.
+            raise HTTPException(409, str(exc)) from None
+        nomination = value["nominations"] or {}
+        # Candidates and rejections are hoisted out of the stored nomination so a
+        # caller can review the exact list a later acceptance would adopt.
+        return {
+            **value,
+            "candidates": nomination.get("candidates", []),
+            "rejected": nomination.get("rejected", []),
+        }
 
     @app.post("/sessions/{identifier}/confirm", dependencies=secured)
     def confirm_session(identifier: str, request: Confirmation):
@@ -203,12 +233,28 @@ def create_app(path: Path, api_key: str, *, allowed_hosts=(), local_origins=()):
     @app.get("/tasks/{identifier}/result", dependencies=secured)
     def result(identifier: str):
         value = task(identifier)
-        if not value["result"]:
-            raise HTTPException(409, "Result unavailable")
+        snapshot_id = (value["result"] or {}).get("snapshot_id")
+        if not snapshot_id:
+            # A run that never collected still reports its deviations instead of
+            # an opaque conflict, so the caller sees code, message and url.
+            raise HTTPException(
+                409,
+                {"message": "Result unavailable", "errors": value["errors"]},
+            )
         try:
-            return manager.store.bundle(value["result"]["snapshot_id"])
+            bundle = manager.store.bundle(snapshot_id)
         except KeyError:
             raise HTTPException(410, "Result expired or deleted") from None
+        return {
+            **bundle,
+            # The stored run contract is authoritative over the bundle copy: it is
+            # what task status, coverage and engine are reported from everywhere.
+            "status": value["status"],
+            "errors": value["errors"],
+            "warnings": value["warnings"],
+            "coverage": value["coverage"],
+            "engine": value["engine"],
+        }
 
     @app.get("/tasks/{identifier}/export.csv", dependencies=secured)
     def export(identifier: str):
@@ -239,8 +285,9 @@ def create_app(path: Path, api_key: str, *, allowed_hosts=(), local_origins=()):
     @app.delete("/tasks/{identifier}/result", dependencies=secured)
     def delete_result(identifier: str):
         value = task(identifier)
-        if value["result"]:
-            manager.store.delete(value["result"]["snapshot_id"])
+        snapshot_id = (value["result"] or {}).get("snapshot_id")
+        if snapshot_id:
+            manager.store.delete(snapshot_id)
         return {"status": "deleted"}
 
     @app.post("/data/delete", dependencies=secured)

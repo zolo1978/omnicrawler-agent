@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Synthetic: looping next link (page A)</title></head>
+<body>
+<h1>Looping pagination, page A</h1>
+<!-- Page A points forward to page B, page B points back to page A: a pagination
+     cycle.  Following it must terminate on the visited set, not on the page
+     budget, and must not be reported as truncation. -->
+<article data-id="LA1"><span class="name">Alpha</span></article>
+<article data-id="LA2"><span class="name">Bravo</span></article>
+<a class="next" href="synthetic_looping_next_b.html">Next page</a>
+</body>
+</html>

@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Synthetic: deeply nested table listing</title></head>
+<body>
+<h1>Nested table listing</h1>
+<!-- Four levels of table nesting around every record: real listing markup
+     frequently nests rows inside layout tables, so a selector that only looks
+     at one level of nesting loses records silently. -->
+<table class="layout outer">
+  <tbody>
+    <tr>
+      <td>
+        <table class="layout middle">
+          <tbody>
+            <tr>
+              <td>
+                <table class="layout inner">
+                  <tbody>
+                    <tr>
+                      <td>
+                        <table class="listing deepest">
+                          <tbody>
+                            <tr><td><article data-id="N1"><span class="name">Alpha</span><span class="price">10</span></article></td></tr>
+                            <tr><td><article data-id="N2"><span class="name">Bravo</span><span class="price">20</span></article></td></tr>
+                            <tr><td><article data-id="N3"><span class="name">Charlie</span><span class="price">30</span></article></td></tr>
+                            <tr><td><article data-id="N4"><span class="name">Delta</span><span class="price">40</span></article></td></tr>
+                            <tr><td><article data-id="N5"><span class="name">Echo</span><span class="price">50</span></article></td></tr>
+                          </tbody>
+                        </table>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </td>
+    </tr>
+  </tbody>
+</table>
+</body>
+</html>

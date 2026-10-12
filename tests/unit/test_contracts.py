@@ -121,3 +121,52 @@ def test_literal_ip_cannot_be_disguised_by_supplied_dns_answers():
     guard = policy.AccessPolicy({"127.0.0.1"})
     with pytest.raises(policy.AccessDenied):
         guard.validate_url("http://127.0.0.1", ["93.184.216.34"])
+
+
+def test_collect_error_and_coverage_are_structured_and_immutable():
+    error = models.CollectError(
+        code="http_status", message="HTTP status 500", url="https://example.com/x"
+    )
+    assert error.retryable is False
+    assert models.CollectError(code="timeout", message="timed out").url is None
+    with pytest.raises(ValidationError):
+        models.CollectError(code="", message="missing code")
+    with pytest.raises(ValidationError):
+        models.CollectError(code="x", message="")
+    coverage = models.Coverage(
+        planned_pages=2, fetched_pages=1, truncated=True, complete=False
+    )
+    assert coverage.warnings == []
+    with pytest.raises(ValidationError):
+        coverage.complete = True
+    with pytest.raises(ValidationError):
+        models.Coverage(planned_pages=-1)
+
+
+def test_snapshot_detail_survives_a_roundtrip(tmp_path):
+    path = tmp_path / "test.sqlite"
+    detail = models.Coverage(planned_pages=3, fetched_pages=3).model_dump(mode="json")
+    storage.SnapshotStore(path).save(
+        Snapshot("one", "catalog", {"A": {"price": "1"}}, True, detail)
+    )
+    restored = storage.SnapshotStore(path).get("one")
+    assert restored.detail["planned_pages"] == 3
+    assert restored.detail["complete"] is True
+
+
+def test_legacy_snapshot_payload_without_detail_still_loads(tmp_path):
+    store = storage.SnapshotStore(tmp_path / "test.sqlite")
+    store.save(Snapshot("one", "catalog", {}, True))
+    assert store.get("one").detail == {}
+
+
+def test_search_config_rejects_plaintext_remote_and_credentialed_endpoints():
+    for endpoint in [
+        "http://search.example.com/api",
+        "https://user:secret@search.example.com/api",
+        "https://search.example.com/api?q=1",
+    ]:
+        with pytest.raises(ValidationError):
+            models.SearchConfig(endpoint=endpoint)
+    assert models.SearchConfig(endpoint="http://127.0.0.1:8080").endpoint
+    assert models.SearchConfig().endpoint is None

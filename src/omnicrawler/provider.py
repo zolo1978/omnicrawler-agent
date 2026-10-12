@@ -6,6 +6,7 @@ sources: model proposals are restricted to the caller's authorized seed scope.
 
 import json
 import os
+from typing import Literal
 from urllib.parse import urlsplit
 
 import aiohttp
@@ -26,6 +27,61 @@ class SelectorProposal(BaseModel):
     item_selector: str = Field(min_length=1)
     id_attribute: str = Field(min_length=1)
     fields: dict[str, str] = Field(min_length=1)
+
+
+class SynthesisCitation(BaseModel):
+    """A pointer the model claims proves a conclusion; never a new source.
+
+    The descriptions are part of the prompt: the schema travels inside the system
+    message, so the citation whitelist is stated where the model must read it.
+    """
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    url: str = Field(
+        min_length=1,
+        description="Must byte-match a url already present in the input records; "
+        "a url you invent or infer removes the whole claim.",
+    )
+    locator: str = Field(
+        min_length=1,
+        description="Must byte-match the locator stored next to that url in the "
+        "input records; an unmatched locator removes the whole claim.",
+    )
+
+
+class SynthesisClaim(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    kind: Literal["fact", "inference"] = Field(
+        description="fact = directly read off the input records; inference = your own analysis."
+    )
+    text: str = Field(
+        min_length=1,
+        description="One sentence in the goal's language. No URLs or host names of your own; "
+        "express provenance with citations instead.",
+    )
+    citations: list[SynthesisCitation] = Field(
+        default_factory=list,
+        description="Stored citations. A claim without any, or with an unmatched one, "
+        "is dropped from the report.",
+    )
+
+
+class SynthesisClaims(BaseModel):
+    """The advertised response envelope, not a per-item gate.
+
+    Callers validate each claim on its own so one malformed item cannot void the
+    rest of the answer; a claim that fails validation is simply not a claim.
+    """
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    claims: list[SynthesisClaim] = Field(min_length=1)
+
+
+_SCHEMAS = {
+    "sources": CandidateSources,
+    "selectors": SelectorProposal,
+    "synthesis": SynthesisClaims,
+}
 
 
 class JsonPlanningProvider:
@@ -52,7 +108,12 @@ class JsonPlanningProvider:
         self.timeout, self.max_bytes = timeout, max_bytes
 
     async def __call__(self, stage, payload):
-        schema = CandidateSources if stage == "sources" else SelectorProposal
+        # An unknown stage must fail loudly: silently reusing another stage's
+        # schema would let a caller's payload through without its own contract.
+        try:
+            schema = _SCHEMAS[stage]
+        except KeyError as exc:
+            raise ValueError(f"Unknown provider stage {stage!r}") from exc
         headers = {"Authorization": f"Bearer {self.token}"} if self.token else {}
         body = {
             "model": self.model,

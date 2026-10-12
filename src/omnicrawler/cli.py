@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import json
 import os
+import sys
 from pathlib import Path
 
 from omnicrawler.pipeline import CollectionConfig, collect
@@ -18,6 +19,17 @@ def main():
     run.add_argument("--db", type=Path, default=Path("data/omnicrawler.sqlite"))
     run.add_argument("--report-dir", type=Path)
     run.add_argument("--format", action="append", choices=["md", "docx", "pdf", "json"])
+    run.add_argument(
+        "--store-raw-html",
+        action="store_true",
+        help="Keep the fetched page source so `omnicrawler replay` can reprint it",
+    )
+    replay = commands.add_parser(
+        "replay", help="Print the stored page source behind one fetch of a snapshot"
+    )
+    replay.add_argument("snapshot_id")
+    replay.add_argument("url")
+    replay.add_argument("--db", type=Path, default=Path("data/omnicrawler.sqlite"))
     demo = commands.add_parser("demo")
     demo.add_argument("--output", type=Path, default=Path("data/demo"))
     serve = commands.add_parser("serve")
@@ -37,6 +49,10 @@ def main():
     args = parser.parse_args()
     if args.command == "collect":
         config = CollectionConfig.model_validate_json(args.config.read_text())
+        if args.store_raw_html:
+            # Retention is opt-in per run: the flag overrides the config file so
+            # the same plan can be replayed without editing and re-committing it.
+            config = config.model_copy(update={"store_raw_html": True})
         result = asyncio.run(collect(config, SnapshotStore(args.db)))
         print(result.model_dump_json(indent=2))
         if args.report_dir:
@@ -90,6 +106,29 @@ def main():
         args.db.parent.mkdir(parents=True, exist_ok=True)
         with worker_lock(args.db):
             asyncio.run(run_guide(args.db, args.allow_host, args.session_id))
+    elif args.command == "replay":
+        store = SnapshotStore(args.db)
+        try:
+            document = store.raw_for_fetch(args.snapshot_id, args.url)
+        except KeyError:
+            document = None  # Unknown snapshot and no retained source read the same.
+        if document is None:
+            print(
+                f"无法回放：快照 {args.snapshot_id} 不存在，或没有为 {args.url} 留存原文。"
+                "留存原文是显式选项（collect --store-raw-html 或配置 store_raw_html=true）；"
+                "结构化字段与证据仍可通过报告和快照读取。",
+                file=sys.stderr,
+            )
+            raise SystemExit(3)
+        # Provenance goes to stderr so stdout stays exactly the retained source,
+        # and the source goes out as UTF-8 bytes so a non-UTF-8 console locale
+        # can neither mangle nor reject the page.
+        print(
+            f"# {document['url']} captured_at={document['captured_at']}",
+            file=sys.stderr,
+        )
+        sys.stdout.buffer.write((document["html"] + "\n").encode("utf-8"))
+        sys.stdout.buffer.flush()
     else:
         print(
             json.dumps({"deleted_snapshots": SnapshotStore(args.db).cleanup(args.days)})
@@ -98,15 +137,21 @@ def main():
 
 async def run_guide(path, allowed_hosts, session_id=None, *, local_origins=()):
     from omnicrawler.provider import provider_from_env
+    from omnicrawler.search import search_from_env
     from omnicrawler.service import TaskService
     from omnicrawler.session import SessionStore
 
-    manager = TaskService(path)
+    # Nomination is offered only when the operator configured a search backend;
+    # without one the dialogue is exactly the deterministic questionnaire.
+    search = search_from_env()
+    provider = provider_from_env()
+    manager = TaskService(path, provider=provider)
     sessions = SessionStore(
         manager,
         allowed_hosts=set(allowed_hosts),
         local_origins=local_origins,
-        provider=provider_from_env(),
+        provider=provider,
+        search=search,
     )
     value = sessions.get(session_id) if session_id else sessions.start()
     print(f"会话 ID：{value['id']}（可用 --session-id 恢复；exit 退出并保存）")
@@ -140,6 +185,25 @@ async def run_guide(path, allowed_hosts, session_id=None, *, local_origins=()):
                 return sessions.get(value["id"])
             answers = value["answers"]
             unknowns = value["draft"]["unknowns"] if value["draft"] else []
+            if (
+                search is not None
+                and answers.get("goal")
+                and not answers.get("source")
+                and input("用已配置的搜索后端提名候选来源？[y/N] ").strip().lower()
+                == "y"
+            ):
+                try:
+                    value = await sessions.nominate(value["id"])
+                except ValueError as exc:
+                    print(f"提名未完成：{exc}")
+                    continue
+                print(json.dumps(value["nominations"], ensure_ascii=False, indent=2))
+                if (
+                    input("采纳以上候选来源？仍需最终执行确认。[y/N] ").strip().lower()
+                    == "y"
+                ):
+                    value = sessions.answer(value["id"], {"accept_nomination": True})
+                    continue
             if (
                 answers.get("source")
                 and answers.get("fields")

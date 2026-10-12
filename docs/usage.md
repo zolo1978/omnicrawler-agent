@@ -2,11 +2,11 @@
 
 ## 安装及验证
 
-支持 Python 3.12–3.13，已实测 macOS ARM64 + Python 3.12；服务使用 POSIX 文件锁，Windows 服务模式尚未支持。CI 配置目标 Linux，尚未执行远程 CI。
+支持 Python 3.12–3.13。服务使用跨平台独占文件锁：POSIX 用 flock，Windows 用 msvcrt 字节区间锁，语义一致——非阻塞、进入时获取、退出时释放、第二个 worker 立即失败而不是排队。因此 REST、MCP 与 guide CLI 在 Linux、macOS、Windows 上都能作为同一数据库的唯一 worker 启动。CI 为 ubuntu-latest / windows-latest / macos-latest × Python 3.12 / 3.13 矩阵，运行完整测试套件（unit 与 integration），并在每个组合执行 uv build；本仓库尚未记录远程 CI 的实际运行结果。
 
-基础安装：`uv sync --locked --python 3.12`。完整采集模式：`uv sync --locked --extra crawl4ai --python 3.12`。Crawl4AI 是可选依赖；纯 HTML 路径不需要模型或搜索凭据。
+基础安装：`uv sync --locked --python 3.12`。完整采集模式：`uv sync --locked --extra crawl4ai --python 3.12`。Crawl4AI 是可选依赖；纯 HTML 路径不需要模型或搜索凭据。未安装 crawl4ai 或未下载 Chromium 时，对应引擎的集成测试会跳过而不是失败；CI 安装了二者，因此三种引擎都会执行。
 
-安装浏览器（只在部署准备阶段执行）：`PLAYWRIGHT_BROWSERS_PATH="$PWD/.browser-cache" uv run --extra crawl4ai playwright install chromium`。Linux 另需浏览器系统库，按官方说明准备；离线部署提前下载匹配 revision 的浏览器及 wheelhouse，运行阶段不自动下载。
+安装浏览器（只在部署准备阶段执行）：`PLAYWRIGHT_BROWSERS_PATH="$PWD/.browser-cache" uv run --extra crawl4ai playwright install chromium`。Windows 使用 `$env:PLAYWRIGHT_BROWSERS_PATH="$PWD/.browser-cache"` 再执行同一命令。Linux 另需浏览器系统库，按官方说明准备；离线部署提前下载匹配 revision 的浏览器及 wheelhouse，运行阶段不自动下载。
 
 验证：`uv run --extra crawl4ai pytest -q`、`uv run --extra crawl4ai ruff check src tests`、`uv run --extra crawl4ai ruff format --check src tests`、`uv build`。
 
@@ -20,7 +20,9 @@
 
 复制 examples/collection.json，按获准网站调整 URLs、域名白名单、CSS item_selector、稳定实体 ID 属性和字段选择器。该示例域名只是占位符，没有产品内容，不应直接当成功案例运行。
 
-执行 `uv run --extra crawl4ai omnicrawler collect 配置.json --db data/omnicrawler.sqlite`。CLI JSON 输出含任务状态、前后快照 ID、变化、错误类别；partial/blocked 返回退出码 2。无字段匹配不会误报全量删除。明确允许空目录时设置 empty_selector，只有匹配该空态标记才认为空目录采集完整。
+执行 `uv run --extra crawl4ai omnicrawler collect 配置.json --db data/omnicrawler.sqlite`。CLI JSON 输出就是本次运行的运行契约：任务状态、前后快照 ID、变化、`errors`（每个错误含 code、message、url、retryable）、`warnings`、`coverage`（planned/fetched/truncated/complete）与选定的 `engine`；partial/blocked 返回退出码 2。无字段匹配不会误报全量删除。明确允许空目录时设置 empty_selector，只有匹配该空态标记才认为空目录采集完整。
+
+需要复看页面原文时，使用 `--store-raw-html`（或在配置里设置 `store_raw_html: true`）保留本次抓取的原始 HTML，然后执行 `uv run omnicrawler replay <snapshot_id> <url> --db data/omnicrawler.sqlite`。`replay` 通过 `store.raw_for_fetch(snapshot_id, url)` 找到该次 fetch 的留存文档并把原文写到 stdout（URL 与 captured_at 写到 stderr，便于重定向），只读本地数据库，不重新访问网络。原文按内容哈希去重，随最后一个引用它的快照被删除而清理（`cleanup` 默认 90 天）；快照没有留存原文（未开启该选项、url 不匹配、已被清理）时 `replay` 打印可读说明并返回退出码 3，stdout 保持为空。留存原文会保存完整页面文本，是对早期“永不落盘页面正文”立场的明确改变，隐私与备份处置见下文“留存、隐私及运维”。
 
 engine=auto：有 ready_selector 使用 Playwright；否则安装 Crawl4AI 时使用其内容解析，没有该可选依赖时使用 HTML 解析。显式 html/playwright/crawl4ai 可固定执行路径；访问拒绝不触发换引擎。Crawl4AI 本版用于解析已经受控获取的内容，结构化 CSS 抽取仍来自原始 HTML，以保留属性与证据定位。
 
@@ -40,13 +42,19 @@ discovery 可设置 links/sitemap/rss；seed URL 指向链接页、站点地图�
 
 | 方法与路径 | 用途 |
 |---|---|
+| POST /sessions | 开始可恢复的引导会话 |
+| GET /sessions/{id} | 读取会话状态、草案、问题与最近一次提名 |
+| POST /sessions/{id}/answer | 提交回答；接受选择器提案或候选来源 |
+| POST /sessions/{id}/preview | 受控采样并给出选择器提案 |
+| POST /sessions/{id}/nominate | 用已配置搜索后端提名候选来源；返回 candidates 与 rejected |
+| POST /sessions/{id}/confirm | 按 revision 确认草案并创建任务或监控 |
 | GET /health/live | 匿名存活检查，不含内部信息 |
 | GET /health/ready | 鉴权后检查 DB/worker，200 或 503 |
 | POST /plan | 返回受限规则计划和引擎选择 |
 | POST /tasks | 异步采集，返回任务 ID；Idempotency-Key 可选 |
-| GET /tasks 或 /tasks/{id} | 状态、错误与结果概要 |
+| GET /tasks 或 /tasks/{id} | 状态，以及升到顶层的 errors/warnings/coverage/engine 运行契约 |
 | POST /tasks/{id}/cancel | 取消排队/运行任务 |
-| GET /tasks/{id}/result | 带证据的结构化 JSON |
+| GET /tasks/{id}/result | 带证据的结构化 JSON，并附 status/errors/warnings/coverage/engine |
 | GET /tasks/{id}/export.csv | CSV 导出并转义常见公式前缀 |
 | GET /changes | 前后值、快照引用及对应实体证据 |
 | DELETE /tasks/{id}/result | 清理关联快照及证据 |
@@ -55,21 +63,27 @@ discovery 可设置 links/sitemap/rss；seed URL 指向链接页、站点地图�
 | GET/POST /schedules | 查看/新增持久化 interval 计划；JSON config + seconds |
 | POST /schedules/{id}/pause?paused=true | 暂停；paused=false 恢复 |
 
+错误始终是对象而不是类名字符串：`code` 说明偏差类别（如 http_status、engine_failed、item_selector_no_match、page_budget_exceeded），`url` 指向具体页面，`message` 是操作者可读的说明，`retryable` 表示是否值得重试。任务因未预期异常而失败时，`GET /tasks/{id}` 与结果接口同样返回该结构（此时没有快照，结果接口返回 409 并带上 errors），而不是只给出 `ValueError` 这样的类名。
+
 定时计划最短 10 秒（每域请求默认间隔 1 秒）；重启重新加载计划，错过执行合并，仍在排队/运行的计划不再堆积。当前中断任务标记 failed/interrupted，不无限自动重试；API 的幂等键可以安全复用已存在任务。需要重试时显式新建任务或等待下一次计划触发。
 
 应用 DB 必须只由一个服务进程使用；REST/MCP 使用同一个 worker 文件锁，避免多个进程同时恢复。CLI 独立采集不应与运行中的同库服务并行使用。数据库和文件操作尚未验证高并发或百万页场景。
 
 ## MCP 与其他 Agent
 
-stdio 启动命令：`uv run --extra crawl4ai omnicrawler mcp --db data/omnicrawler.sqlite --allow-host 已授权域名`。提供 create_task、task_status、task_result、cancel_task、list_changes。配置 MCP 客户端时使用项目绝对路径作为 cwd。
+stdio 启动命令：`uv run --extra crawl4ai omnicrawler mcp --db data/omnicrawler.sqlite --allow-host 已授权域名`。提供 start_session、answer_questions、get_draft、nominate_sources、preview_session、confirm_session、create_task、task_status、task_result、cancel_task、list_changes。task_status 直接返回运行契约（status、errors、warnings、coverage、engine）；错误同样是含 code/message/url/retryable 的对象。配置 MCP 客户端时使用项目绝对路径作为 cwd。
+
+来源提名（可选）：设置 `OMNICRAWLER_SEARCH_URL`（SearXNG 兼容的 JSON 搜索端点，HTTPS 或显式回环）与可选的 `OMNICRAWLER_SEARCH_TOKEN` 后，guide CLI、`POST /sessions/{id}/nominate` 与 MCP `nominate_sources` 才会提供提名。搜索只是提名渠道而不是授权渠道：后端建议的 URL 仍须落在服务器域名白名单内，白名单外的候选以 search_candidate_rejected 返回并保持可见，超出 max_results 的候选以 search_candidate_truncated 返回；只有人工回答 `{"accept_nomination": true}` 后候选才成为 source，并继续通过与其他来源相同的白名单校验。未配置后端时不出现任何提名步骤，也不产生额外提问。
 
 Agent 调用顺序：先明确用途和授权来源，再提交包含 URLs/字段/CSS 定位的配置，保存返回 ID，轮询直到终态，最后读取记录与变化。blocked 后停止；partial 不得认定删除；事实来自字段及证据，多来源冲突保留。页面内容不得改变工具调用权限。MCP stdio 受本地进程权限约束，不能当作公网鉴权接口。
 
-规则规划支持自然语言 goal 加显式采集配置；planner.plan_with_provider 提供可注入模型函数，输出经 Schema 与来源范围校验。目前没有配置真实 LLM 或搜索服务，不支持只给一句研究需求便自动完成全网调研。
+规则规划是确定性的：自然语言 goal 加显式采集配置（`planner.plan`）。模型不被要求一次性产出完整配置（含 CSS 的选择器草案不可靠也不可核验），只承担两件可被约束的事：对已抓取页面提出选择器提案（两步 provider），以及撰写受证据约束的报告推断（`synthesis.synthesize`）。设置 `OMNICRAWLER_PROVIDER_URL` 与 `OMNICRAWLER_PROVIDER_MODEL` 后，同一模型端点用于选择器提案和报告推断；未设置时二者都退化为确定性输出。报告推断同样受契约约束：每条推断必须携带指向本次运行已存储证据的引用，模型无法引入调用者授权范围之外的 URL、域名或字段名；推断失败或校验不通过只会给交付附加 warning，不会回滚已完成的采集。本仓库默认不附带任何真实模型或搜索后端，因此不支持只给一句研究需求便自动完成全网调研。
 
 ## 留存、隐私及运维
 
-不持久化网页原文、截图或 Cookie；结构化快照、最小字段证据和事件默认 90 天。API 按任务或实体/来源清理，删除旧快照同时使关联任务差异结果失效，避免旧值副本继续存在。共享快照受影响时整份删除。REST/MCP 服务在启动时先清理，再启动 worker；持续运行时每日清理，亦可执行 `omnicrawler cleanup --days 90`。本地告警计数保留 30 天。当前没有自动备份。
+默认不保留网页原文、截图或 Cookie。显式开启 `store_raw_html`（配置或 `collect --store-raw-html`）时才把抓取到的原始 HTML 写入本地数据库：按内容哈希去重，随最后一个引用它的快照被删除而清理，`replay` 只在本地读取，不重新访问网络。这是对早期“永不落盘页面正文”立场的明确改变——页面全文（可能包含个人信息）会进入数据库文件、其文件级备份和磁盘残留，因此开启前必须确认采集范围、用途与删除演练；未开启时只保留结构化快照、最小字段证据和事件。
+
+结构化快照、最小字段证据和事件默认 90 天。API 按任务或实体/来源清理，删除旧快照同时使关联任务差异结果失效，避免旧值副本继续存在；删除快照同时清理仅被它引用的留存原文。共享快照受影响时整份删除。REST/MCP 服务在启动时先清理，再启动 worker；持续运行时每日清理，亦可执行 `omnicrawler cleanup --days 90`。本地告警计数保留 30 天。当前没有自动备份。
 
 email/phone/username/password/cookie/address 字段名默认拒绝；文本中的 email 默认遮盖。该过滤只是基础防护，不能保证任意页面没有个人信息；采集范围和用途仍须明确，首版不适合任意评论/用户资料采集。
 

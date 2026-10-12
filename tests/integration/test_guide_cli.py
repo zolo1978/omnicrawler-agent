@@ -1,6 +1,39 @@
+import asyncio
 import json
 import subprocess
 import sys
+import threading
+from contextlib import contextmanager
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+from omnicrawler.cli import run_guide
+
+
+@contextmanager
+def search_backend(results):
+    """A minimal SearXNG-shaped backend so the nomination path stays offline."""
+    payload = json.dumps({"results": [{"url": url} for url in results]}).encode()
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
 
 
 def test_cli_guidance_interactive_resume_and_confirmation(site, tmp_path):
@@ -100,10 +133,6 @@ def test_collect_can_deliver_report_formats(site, tmp_path):
 def test_full_cli_dialogue_executes_only_after_confirmation(
     site, tmp_path, monkeypatch
 ):
-    import asyncio
-
-    from omnicrawler.cli import run_guide
-
     origin, _ = site
     replies = iter(
         ["once", "价格", origin + "/products", "127.0.0.1", "price", "y", "y", "y"]
@@ -115,3 +144,35 @@ def test_full_cli_dialogue_executes_only_after_confirmation(
     assert value["state"] == "done"
     identifier = value["confirmation"]["task_id"]
     assert (tmp_path / "reports" / identifier / "report.md").exists()
+
+
+def test_guide_cli_nominates_sources_only_with_a_backend(tmp_path, monkeypatch):
+    candidate = "http://127.0.0.1:9/product"
+    with search_backend([candidate, "https://evil.example/x"]) as backend:
+        monkeypatch.setenv("OMNICRAWLER_SEARCH_URL", backend)
+        replies = iter(["once", "价格", "y", "y", "127.0.0.1", "exit"])
+        monkeypatch.setattr("builtins.input", lambda prompt: next(replies))
+        value = asyncio.run(run_guide(tmp_path / "db.sqlite", {"127.0.0.1"}))
+
+    # Accepting a nomination is what makes the candidate a source; the rejected
+    # candidate stays visible instead of quietly disappearing.
+    assert value["answers"]["source"] == [candidate]
+    assert value["nominations"]["candidates"] == [candidate]
+    assert value["nominations"]["goal"] == "价格"
+    assert value["nominations"]["rejected"][0]["code"] == "search_candidate_rejected"
+
+
+def test_guide_cli_asks_nothing_extra_without_a_search_backend(tmp_path, monkeypatch):
+    monkeypatch.delenv("OMNICRAWLER_SEARCH_URL", raising=False)
+    monkeypatch.delenv("OMNICRAWLER_SEARCH_TOKEN", raising=False)
+    prompts = []
+
+    def reply(prompt):
+        prompts.append(prompt)
+        return "exit"
+
+    monkeypatch.setattr("builtins.input", reply)
+    value = asyncio.run(run_guide(tmp_path / "db.sqlite", {"127.0.0.1"}))
+
+    assert value["nominations"] is None
+    assert not any("提名" in prompt for prompt in prompts)

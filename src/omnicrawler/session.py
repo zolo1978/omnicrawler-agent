@@ -13,7 +13,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validato
 
 from omnicrawler.core import make_plan
 from omnicrawler.governance import sanitize
-from omnicrawler.models import Evidence
+from omnicrawler.models import Evidence, SearchConfig
 from omnicrawler.pipeline import CollectionConfig
 from omnicrawler.transport import SafeFetcher
 
@@ -96,6 +96,7 @@ class PlanDraft(BaseModel):
     budget: int
     unknowns: list[str]
     preview: PreviewResult | None = None
+    nominations: dict | None = None
     deliverable_formats: list[str]
     status: Literal["draft", "confirmed"] = "draft"
 
@@ -106,7 +107,7 @@ def hosts_for(urls):
     )
 
 
-def draft_for(answers: Answers, preview=None, confirmed=False):
+def draft_for(answers: Answers, preview=None, confirmed=False, nominations=None):
     if answers.task_type is None:
         return None
     unknowns = []
@@ -133,12 +134,13 @@ def draft_for(answers: Answers, preview=None, confirmed=False):
         budget=answers.budget,
         unknowns=unknowns,
         preview=preview,
+        nominations=nominations,
         deliverable_formats=answers.deliverable_formats,
         status="confirmed" if confirmed else "draft",
     )
 
 
-def questions_for(answers, draft):
+def questions_for(answers, draft, nominate=False):
     if answers.task_type is None:
         return [
             Question(
@@ -150,7 +152,12 @@ def questions_for(answers, draft):
         ]
     prompts = {
         "goal": ("你想得到什么？", "text"),
-        "source": ("提供已授权的种子 URL 列表；搜索主题尚需补充 URL。", "url"),
+        "source": (
+            "可用目标（goal）提名候选来源，或直接提供已授权的种子 URL 列表。"
+            if nominate
+            else "提供已授权的种子 URL 列表；搜索主题尚需补充 URL。",
+            "url",
+        ),
         "fields": (
             "关注哪些字段？提交字段名到 CSS 选择器的映射，未知选择器留空。",
             "list",
@@ -177,17 +184,27 @@ def questions_for(answers, draft):
 
 
 class SessionStore:
-    def __init__(self, manager, *, allowed_hosts, local_origins=(), provider=None):
+    def __init__(
+        self,
+        manager,
+        *,
+        allowed_hosts,
+        local_origins=(),
+        provider=None,
+        search: SearchConfig | None = None,
+    ):
         self.manager = manager
         self.store = manager.store
         self.allowed_hosts = {h.lower().encode("idna").decode() for h in allowed_hosts}
         self.local_origins = set(local_origins)
         self.provider = provider
+        self.search = search
         with self.store._connection() as conn:
             conn.executescript("""
                 CREATE TABLE IF NOT EXISTS guidance_sessions (
                     id TEXT PRIMARY KEY, state TEXT NOT NULL, revision INTEGER NOT NULL,
-                    answers TEXT NOT NULL, preview TEXT, confirmation TEXT, created_at TEXT NOT NULL
+                    answers TEXT NOT NULL, preview TEXT, confirmation TEXT, created_at TEXT NOT NULL,
+                    nominations TEXT
                 );
                 CREATE TABLE IF NOT EXISTS guidance_audit (
                     session_id TEXT PRIMARY KEY REFERENCES guidance_sessions(id),
@@ -202,12 +219,21 @@ class SessionStore:
                     formats TEXT NOT NULL
                 );
             """)
+            # Existing databases predate source nomination, so the column is added
+            # in place instead of recreating a table that holds audit history.
+            if "nominations" not in {
+                row[1] for row in conn.execute("PRAGMA table_info(guidance_sessions)")
+            }:
+                conn.execute(
+                    "ALTER TABLE guidance_sessions ADD COLUMN nominations TEXT"
+                )
 
     def start(self):
         identifier = str(uuid4())
         with self.store._connection() as conn:
             conn.execute(
-                "INSERT INTO guidance_sessions VALUES (?, 'eliciting', 0, ?, NULL, NULL, ?)",
+                "INSERT INTO guidance_sessions (id, state, revision, answers, created_at)"
+                " VALUES (?, 'eliciting', 0, ?, ?)",
                 (
                     identifier,
                     Answers().model_dump_json(),
@@ -218,7 +244,8 @@ class SessionStore:
 
     def _row(self, conn, identifier):
         row = conn.execute(
-            "SELECT state, revision, answers, preview, confirmation FROM guidance_sessions WHERE id=?",
+            "SELECT state, revision, answers, preview, confirmation, nominations"
+            " FROM guidance_sessions WHERE id=?",
             (identifier,),
         ).fetchone()
         if row is None:
@@ -227,7 +254,7 @@ class SessionStore:
 
     def get(self, identifier):
         with self.store._connection() as conn:
-            state, revision, payload, preview, confirmation = self._row(
+            state, revision, payload, preview, confirmation, nominations = self._row(
                 conn, identifier
             )
         answers = Answers.model_validate_json(payload)
@@ -245,6 +272,7 @@ class SessionStore:
             answers,
             PreviewResult.model_validate_json(preview) if preview else None,
             bool(result),
+            json.loads(nominations) if nominations else None,
         )
         return {
             "id": identifier,
@@ -252,7 +280,11 @@ class SessionStore:
             "revision": revision,
             "answers": answers.model_dump(exclude_none=True),
             "draft": draft.model_dump(mode="json") if draft else None,
-            "questions": [q.model_dump() for q in questions_for(answers, draft)]
+            "nominations": json.loads(nominations) if nominations else None,
+            "questions": [
+                q.model_dump()
+                for q in questions_for(answers, draft, self.search is not None)
+            ]
             if not result
             else [],
             "confirmation": result,
@@ -267,11 +299,12 @@ class SessionStore:
     def answer(self, identifier, updates):
         updates = dict(updates)
         accept = updates.pop("accept_preview", False)
-        if type(accept) is not bool:
-            raise ValueError("accept_preview must be a boolean")
+        accept_nomination = updates.pop("accept_nomination", False)
+        if type(accept) is not bool or type(accept_nomination) is not bool:
+            raise ValueError("accept_preview and accept_nomination must be booleans")
         with self.store._connection() as conn:
             conn.execute("BEGIN IMMEDIATE")
-            state, revision, payload, preview, confirmation = self._row(
+            state, revision, payload, preview, confirmation, nomination = self._row(
                 conn, identifier
             )
             if confirmation or state not in {"eliciting", "drafting", "confirming"}:
@@ -292,6 +325,15 @@ class SessionStore:
                 preview = None
             if "source" in updates and updates["source"] != current.get("source"):
                 current["scope"] = None
+            if accept_nomination:
+                # Search only ever nominates: the candidates become the source
+                # solely because a human accepted them, and they then pass the
+                # same allowlist gate below as a hand-typed source.
+                if not nomination:
+                    raise ValueError("No current nomination to accept")
+                current["source"] = list(json.loads(nomination)["candidates"])
+                current["scope"] = None
+                preview = None
             if updates.get("task_type") == "once":
                 current["frequency"] = None
             current.update(updates)
@@ -344,7 +386,7 @@ class SessionStore:
         schedule_id = None
         with self.store._connection() as conn:
             conn.execute("BEGIN IMMEDIATE")
-            state, current_revision, payload, _, confirmation = self._row(
+            state, current_revision, payload, _, confirmation, _nomination = self._row(
                 conn, identifier
             )
             if revision != current_revision:
@@ -418,6 +460,58 @@ class SessionStore:
                     (identifier,),
                 )
             ]
+
+    async def nominate(self, identifier, updates=None):
+        """Ask the configured search backend for candidate sources for this goal.
+
+        Network I/O cannot hide inside the synchronous ``answer`` path, so
+        nomination is its own call, exactly like ``preview``. The candidates are
+        persisted as a proposal only: ``answers.source`` stays unset until a
+        human answers ``{"accept_nomination": true}``, after which the accepted
+        list passes the same server-allowlist gate as a hand-typed source. No
+        collection target is fetched here — the configured search endpoint is
+        the only host contacted, and only after explicit human acceptance does a
+        source exist that ``preview``/``confirm`` may fetch.
+        """
+        if self.search is None:
+            raise ValueError(
+                "No search backend configured; provide source URLs explicitly"
+            )
+        if updates:
+            self.answer(identifier, updates)
+        value = self.get(identifier)
+        if value["confirmation"]:
+            raise ValueError("Confirmed session cannot be edited; start a new session")
+        answers = Answers.model_validate(value["answers"])
+        # Same server-allowlist guard as every other answer path: nomination may
+        # add candidates but must never widen the caller's authorized scope.
+        self._authorize(answers)
+        goal = (answers.goal or "").strip()
+        if not goal:
+            raise ValueError("Answer the goal before nominating sources")
+        from omnicrawler.search import search_candidates
+
+        candidates, rejected = await search_candidates(
+            goal=goal, config=self.search, allowed_hosts=self.allowed_hosts
+        )
+        nomination = {
+            "goal": goal,
+            "candidates": candidates,
+            "rejected": [item.model_dump(mode="json") for item in rejected],
+            "captured_at": datetime.now(UTC).isoformat(),
+        }
+        with self.store._connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            _state, revision, _payload, _preview, confirmation, _nomination = self._row(
+                conn, identifier
+            )
+            if confirmation or revision != value["revision"]:
+                raise ValueError("Session changed during nomination; retry")
+            conn.execute(
+                "UPDATE guidance_sessions SET revision=?, nominations=? WHERE id=?",
+                (revision + 1, json.dumps(nomination), identifier),
+            )
+        return self.get(identifier)
 
     async def preview(self, identifier):
         value = self.get(identifier)
@@ -550,7 +644,9 @@ class SessionStore:
         )
         with self.store._connection() as conn:
             conn.execute("BEGIN IMMEDIATE")
-            _state, revision, _, _, confirmation = self._row(conn, identifier)
+            _state, revision, _, _, confirmation, _nomination = self._row(
+                conn, identifier
+            )
             if confirmation or revision != value["revision"]:
                 raise ValueError("Session changed during preview; retry")
             conn.execute(

@@ -25,13 +25,34 @@ def test_cross_validation_keeps_conflicting_observations():
     assert result[0]["kind"] == "fact"
 
 
-def test_agreement_does_not_prove_source_independence():
+def test_agreement_across_two_hosts_verifies_independence():
     result = governance.assess(
         [record("https://one.example/p", "79"), record("https://two.example/p", "79")]
     )
     assert result[0]["status"] == "agreement"
-    assert not result[0]["independence_verified"]
+    assert result[0]["independence_verified"] is True
+    assert result[0]["independent_sources"] == 2
     assert len(result[0]["observations"]) == 2
+
+
+def test_repeated_observations_on_one_host_are_not_independent():
+    result = governance.assess(
+        [
+            record("https://one.example/a", "79"),
+            record("https://one.example/b", "79"),
+            record("https://one.example:8443/c", "79"),
+        ]
+    )
+    assert result[0]["status"] == "agreement"
+    assert result[0]["independence_verified"] is False
+    assert result[0]["independent_sources"] == 1
+
+
+def test_single_observation_is_neither_agreement_nor_independent():
+    result = governance.assess([record("https://one.example/p", "79")])
+    assert result[0]["status"] == "single_source"
+    assert result[0]["independence_verified"] is False
+    assert result[0]["independent_sources"] == 1
 
 
 def test_personal_email_is_filtered_before_storage():

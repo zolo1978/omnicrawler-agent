@@ -1,9 +1,25 @@
-"""Discover candidate URLs; every actual fetch still passes transport policy."""
+"""Discover candidate URLs; every actual fetch still passes transport policy.
+
+In-page discovery lives here; backend *nomination* lives in
+:mod:`omnicrawler.search`, re-exported below so every discovery mode has one
+entry point. Both paths only propose — the allowlist still decides.
+"""
 
 from urllib.parse import urldefrag, urljoin, urlsplit
 from xml.etree import ElementTree
 
 from bs4 import BeautifulSoup
+
+from omnicrawler.models import SearchConfig
+
+
+async def search_sources(
+    *, goal: str, config: SearchConfig | None, allowed_hosts: set[str]
+) -> list[str]:
+    """Delegate to :mod:`omnicrawler.search` without importing aiohttp eagerly."""
+    from omnicrawler.search import search_sources as nominate
+
+    return await nominate(goal=goal, config=config, allowed_hosts=allowed_hosts)
 
 
 def extract_sources(

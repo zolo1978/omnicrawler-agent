@@ -199,7 +199,7 @@ PDF 候选对照：WeasyPrint（BSD，但需 pango/cairo 系统库）、reportla
 src/omnicrawler/
   session.py     # GuidanceSession 状态机 + 问卷 + PlanDraft + confirm
   report.py      # Report 模型 + render_markdown/render_docx/render_pdf
-  planner.py     # 复用：plan / plan_with_provider（草案生成）
+  planner.py     # 复用：plan（确定性草案；plan_with_provider 已于 2026-10-12 退役）
   pipeline.py    # 复用：CollectionConfig / collect
   service.py     # 复用：TaskService.enqueue / schedule
   policy.py      # 复用：SafeFetcher 安全边界
@@ -269,6 +269,8 @@ start_session / answer_questions / get_draft / confirm_session
 | RP05 | `deliverable_formats` 接入 PlanDraft 与交付步骤 | RP03, RP04, GD04 | 确认后按格式写文件；格式缺失降级不阻断任务 |
 | GD06 | `preview` 采样预览（确定性选择器建议） | RP01 | 输入 url+allowlist 返回候选 item/id/字段选择器 + 抽样证据；走 SafeFetcher；不放松边界 |
 | GD07 | `plan_with_provider` 两步化 + 真实 provider 接入 | GD06 | 目标→候选源→草案闭环；LLM 输出经校验仍不能扩大授权 |
+
+> 2026-10-12 后续说明：GD07 当时以 mock 回显服务验收，从未接入真实模型（见 `docs/validation/2026-10-11.md`）。其“一次性产出完整配置”的路径已被判定为不可靠且不可核验，`planner.plan_with_provider` 已删除；模型能力改为两处受约束用途：`session.preview` 的两步选择器提案（仍经 Schema 与来源范围校验），以及 `synthesis.synthesize` 的证据约束推断。决策与验收见 [产品级优化方案](2026-10-12-product-upgrade.md)。
 
 ### 里程碑与估算
 

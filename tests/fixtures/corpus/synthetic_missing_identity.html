@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Synthetic: items without identity</title></head>
+<body>
+<h1>Listing with an anonymous row</h1>
+<!-- The middle row carries no data-id: its entity cannot be tracked across
+     snapshots, so the entity universe is incomplete and the page must not be
+     treated as a comparable snapshot. -->
+<article data-id="M1"><span class="name">Alpha</span></article>
+<article><span class="name">Anonymous</span></article>
+<article data-id="M3"><span class="name">Charlie</span></article>
+</body>
+</html>

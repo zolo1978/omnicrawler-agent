@@ -3,15 +3,37 @@ on: [push, pull_request, workflow_dispatch]
 permissions:
   contents: read
 jobs:
-  unit:
-    runs-on: ubuntu-24.04
+  suite:
+    # The suite spans unit and integration tests, including real Chromium and
+    # REST/MCP entrypoints, so every supported OS and interpreter runs all of it.
+    name: suite (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.12", "3.13"]
+    env:
+      # Playwright resolves this on every platform; the collector applies the
+      # same default relative to the working directory.
+      PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.browser-cache
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
-      - run: sudo apt-get update && sudo apt-get install -y fonts-noto-cjk
-      - run: uv sync --locked --extra crawl4ai --python 3.12
-      - run: PLAYWRIGHT_BROWSERS_PATH="$PWD/.browser-cache" uv run --extra crawl4ai playwright install --with-deps chromium
+      - name: Install CJK fonts
+        if: runner.os == 'Linux'
+        # PDF rendering asserts on CJK glyphs; the runners ship no CJK font.
+        run: sudo apt-get update && sudo apt-get install -y fonts-noto-cjk
+      - run: uv sync --locked --extra crawl4ai --python ${{ matrix.python }}
+      - name: Install Chromium
+        run: uv run --extra crawl4ai playwright install chromium
+      - name: Install Chromium system libraries
+        if: runner.os == 'Linux'
+        run: uv run --extra crawl4ai playwright install-deps chromium
       - name: Allow Chromium sandbox user namespaces
+        if: runner.os == 'Linux'
+        # Ubuntu 23.10+ restricts unprivileged user namespaces, which the
+        # sandboxed Chromium needs; the profile is loaded for this runner only.
         run: |
           python3 - <<'PY'
           from pathlib import Path
@@ -25,5 +47,6 @@ jobs:
           PY
           sudo apparmor_parser -r /tmp/omnicrawler-ci-apparmor
       - run: uv run --extra crawl4ai pytest -q
-      - run: uv run --extra crawl4ai ruff check src tests
-      - run: uv run --extra crawl4ai ruff format --check src tests
+      - run: uv run --extra crawl4ai ruff check src tests tools
+      - run: uv run --extra crawl4ai ruff format --check src tests tools
+      - run: uv build

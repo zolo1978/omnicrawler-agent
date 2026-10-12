@@ -58,6 +58,65 @@ class Claim(Contract):
     evidence: list[Evidence] = Field(min_length=1)
 
 
+class CollectError(Contract):
+    """Operator-facing deviation: what failed, where, and whether it is worth retrying."""
+
+    code: str = Field(min_length=1)
+    message: str = Field(min_length=1)
+    url: str | None = None
+    retryable: bool = False
+
+
+class Coverage(Contract):
+    """Declared extraction scope versus what was actually obtained.
+
+    ``planned_pages`` counts the seeds/discovered links a run intended to fetch;
+    ``fetched_pages`` counts every successful fetch including pagination pages.
+    ``complete`` is the single authority for change inference: any entity-level
+    deviation or truncation makes it false. Field-level deviations are warnings
+    and deliberately do not clear it.
+    """
+
+    planned_pages: int = Field(default=0, ge=0)
+    fetched_pages: int = Field(default=0, ge=0)
+    truncated: bool = False
+    complete: bool = True
+    warnings: list[CollectError] = Field(default_factory=list)
+
+
+class SearchConfig(Contract):
+    """Where candidate sources may be nominated from; never an authorization source."""
+
+    endpoint: str | None = None
+    query_template: str = "{goal}"
+    max_results: int = Field(default=20, gt=0, le=100)
+    token: str | None = None
+
+    @field_validator("endpoint")
+    @classmethod
+    def valid_endpoint(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        parsed = urlsplit(value)
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+            or any(char.isspace() for char in value)
+        ):
+            raise ValueError("Search endpoint must be a credential-free HTTP(S) URL")
+        if parsed.scheme == "http" and parsed.hostname not in {
+            "127.0.0.1",
+            "localhost",
+            "::1",
+        }:
+            raise ValueError("Search endpoint requires HTTPS or an explicit loopback")
+        return value
+
+
 Status = Literal[
     "queued", "running", "succeeded", "partial", "failed", "cancelled", "blocked"
 ]

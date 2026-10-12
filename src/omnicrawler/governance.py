@@ -2,6 +2,7 @@
 
 import re
 from collections import defaultdict
+from urllib.parse import urlsplit
 
 
 def sanitize(text: str) -> str:
@@ -9,6 +10,14 @@ def sanitize(text: str) -> str:
 
 
 def assess(records) -> list[dict]:
+    """Group field observations per entity and state how well they corroborate.
+
+    Independence is *host* diversity, not observation count: two pages on one host
+    share a publisher and its mistakes, so their agreement proves nothing beyond
+    self-consistency. ``independent_sources`` reports how many distinct hostnames
+    actually backed the field, and ``independence_verified`` is true only when at
+    least two of them did.
+    """
     groups = defaultdict(list)
     for record in records:
         for field, value in record.fields.items():
@@ -21,6 +30,11 @@ def assess(records) -> list[dict]:
     output = []
     for (entity, field), observations in sorted(groups.items()):
         values = {str(observation["value"]) for observation in observations}
+        hosts = {
+            urlsplit(str(observation["evidence"]["url"])).hostname or ""
+            for observation in observations
+        }
+        hosts.discard("")
         output.append(
             {
                 "entity_id": entity,
@@ -31,7 +45,8 @@ def assess(records) -> list[dict]:
                 else "agreement"
                 if len(observations) > 1
                 else "single_source",
-                "independence_verified": False,
+                "independence_verified": len(hosts) >= 2,
+                "independent_sources": len(hosts),
                 "observations": observations,
             }
         )

@@ -10,7 +10,7 @@ uv run --extra crawl4ai omnicrawler guide --allow-host example.com
 
 Linux PDF 需要 `fonts-noto-cjk`（Debian/Ubuntu：`sudo apt-get install fonts-noto-cjk`），Chromium 沙箱部署要求见 usage.md。macOS 优先使用可用的 STHeiti，再使用 PingFang。字体不存在时不输出缺字 PDF，而交付其他格式并返回 warning。
 
-CLI 白名单由 `--allow-host` 指定，不从任意用户输入自动扩大。引导顺序：once/monitor → 目标 → 种子 URL → 范围 → 字段 → 采样或手工定位 → 草案确认。字段名用逗号分隔；CSS 选择器可由预览提案补充。`exit`、EOF 或 Ctrl-C 保存草案；用相同 `--db` 和 `--session-id` 恢复。拒绝最终确认不会创建任务。
+CLI 白名单由 `--allow-host` 指定，不从任意用户输入自动扩大。引导顺序：once/monitor → 目标 → 种子 URL（配置搜索后端时可用目标提名，见「来源提名」）→ 范围 → 字段 → 采样或手工定位 → 草案确认。字段名用逗号分隔；CSS 选择器可由预览提案补充。`exit`、EOF 或 Ctrl-C 保存草案；用相同 `--db` 和 `--session-id` 恢复。拒绝最终确认不会创建任务。
 
 monitor 需要至少 10 秒的周期和稳定 ID。确认同时创建立即执行的基线任务与持久计划；CLI 返回后，需启动同一数据库、同一白名单的 `serve` 或 `mcp` 才持续检查。禁止多个进程同时执行同一数据库，guide/serve/mcp 使用单 worker 锁。
 
@@ -50,9 +50,20 @@ uv run --extra crawl4ai omnicrawler serve --allow-host example.com
 
 未就绪报告返回 409；请求不存在的格式返回 422；字体/依赖缺失导致指定格式无法交付时返回 503，并给出安全 warning。采集任务仍保留其原成功/partial/blocked 状态。
 
+## 来源提名（可选搜索后端）
+
+配置 `OMNICRAWLER_SEARCH_URL`（SearXNG 兼容 JSON 端点）启用来源提名，可选 `OMNICRAWLER_SEARCH_TOKEN` 作为 `Authorization: Bearer`；两者都不设置时行为与今天完全一致。启用后 `source` 一问可以直接用 goal 提名候选：REST 为 `POST /sessions/{id}/nominate`，MCP 为 `nominate_sources`，CLI 仅在配置了后端时提供提名提示。会话执行一次 `GET {endpoint}/search?q=<goal>&format=json`（`query_template` 可改写查询，`max_results` 限定候选数），并把结果持久化到会话视图的 `nominations`（含 `goal`、`candidates`、`rejected`、`captured_at`；`draft.nominations` 同样可见），用 `--session-id` 恢复后仍是同一批候选。
+
+搜索只能**提名**，不能**授权**：
+
+- 每个候选都要通过与服务端白名单相同的规则（绝对 http(s)、host 在白名单内、无凭据、去重、不超过 `max_results`）；越界候选进入 `nominations.rejected` 而不是被静默丢弃，若没有任何候选通过白名单则明确报错，不返回空列表。
+- 候选不会自动写入 `answers.source`：人工回复 `{"accept_nomination": true}` 才生效（与 `accept_preview` 同一套 revision/确认语义），接受后范围（scope）必须重新确认，并照常经过采样与最终执行确认。
+- 接受前不会向任何采集目标发起请求；搜索端点未配置、不可用、返回非 JSON 或全部候选越界时都是明确错误，而不是空候选。
+- 与 provider 相互独立：未配置 provider 时提名仍可用，未配置搜索后端时 provider 行为不变。
+
 ## MCP
 
-新增 `start_session`、`answer_questions`、`get_draft`、`preview_session`、`confirm_session`、`task_report`。调用方 Agent 管理对话，OmniCrawler 提供受约束原语。`get_draft` 返回会话视图，含 revision/draft/未知项；confirm 必须提交看到的版本。stdio 启动白名单保持固定。
+新增 `start_session`、`answer_questions`、`get_draft`、`nominate_sources`、`preview_session`、`confirm_session`、`task_report`。调用方 Agent 管理对话，OmniCrawler 提供受约束原语。`get_draft` 返回会话视图，含 revision/draft/未知项与已提名的 `nominations`；confirm 必须提交看到的版本。stdio 启动白名单保持固定。
 
 ## 报告阅读体验
 
@@ -84,4 +95,4 @@ uv run --extra crawl4ai omnicrawler collect examples/collection.json --report-di
 
 两阶段：从已提供且已授权的种子中提出候选 → 基于受控采样的确定性提案提出字段定位。请求发送目标、已选 URL/字段及候选选择器，不发送原始 HTML或完整网页。调用可能产生所配置服务的费用，由该服务账户管理；未配置时无模型调用。适配器验证 JSON schema、种子范围、字段集合及采样匹配，不跟随 provider 重定向，不读取环境代理；失败或越权仅安全告警并保留确定性提案。
 
-模型提案仍需主动接受并最终确认。它不能添加 host/字段、自动搜索全网、改动频率或预算；goal-only 仍会询问 URL。这一阶段实现 provider 接口与受约束闭环，尚未使用外部真实模型账户评估提案质量，也未接入搜索服务。
+模型提案仍需主动接受并最终确认。它不能添加 host/字段、改动频率或预算，也不参与来源发现：provider 只在已授权种子内定位字段。goal-only 的种子澄清走独立的搜索提名路径（见「来源提名」），未配置搜索后端时仍会询问 URL。provider 这段实现与受约束闭环，尚未使用外部真实模型账户评估提案质量。

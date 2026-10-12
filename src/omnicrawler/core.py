@@ -3,7 +3,7 @@
 URL validation here is structural; access policy and DNS checks run before fetch.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -41,6 +41,7 @@ class Snapshot:
     coverage: str
     records: dict[str, dict[str, Any]]
     complete: bool
+    detail: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

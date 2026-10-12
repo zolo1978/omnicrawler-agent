@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import os
 from contextlib import contextmanager, nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
@@ -10,24 +11,108 @@ from uuid import uuid4
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
+from omnicrawler.models import CollectError
 from omnicrawler.pipeline import CollectionConfig, collect
+from omnicrawler.provider import provider_from_env
 from omnicrawler.storage import SnapshotStore
 
 logger = logging.getLogger("omnicrawler")
 
+# A single byte at offset zero is enough to represent "this database has a worker".
+# Both primitives are advisory, released when the handle closes (including on a
+# crash), and both refuse instead of queueing so a misconfigured second worker
+# fails at startup rather than double-executing recoveries and schedules.
+_LOCK_BYTES = 1
+
 
 @contextmanager
 def worker_lock(path):
+    """Hold the exclusive worker lock beside ``path`` for the whole block.
+
+    POSIX uses ``flock``; Windows has no ``flock``, so ``msvcrt.locking`` provides
+    the same non-blocking, handle-scoped exclusion. Contention raises
+    ``BlockingIOError`` in both cases so callers and operators see one behaviour.
+    """
+    lock_path = Path(f"{path}.worker.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(lock_path, "a+b") as handle:
+        _acquire(handle, lock_path)
+        try:
+            yield
+        finally:
+            _release(handle)
+
+
+def _acquire(handle, lock_path):
+    if os.name == "nt":
+        import msvcrt
+
+        handle.seek(0)
+        try:
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, _LOCK_BYTES)
+        except OSError as exc:
+            raise BlockingIOError(
+                f"Another OmniCrawler worker already holds {lock_path}"
+            ) from exc
+        return
     import fcntl
 
-    with open(str(path) + ".worker.lock", "a") as handle:
+    try:
         fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        yield
+    except OSError as exc:
+        raise BlockingIOError(
+            f"Another OmniCrawler worker already holds {lock_path}"
+        ) from exc
+
+
+def _release(handle):
+    # Closing the handle would release the region anyway; unlocking first keeps
+    # the release explicit and symmetric with the acquire path.
+    if os.name == "nt":
+        import msvcrt
+
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, _LOCK_BYTES)
+        return
+    import fcntl
+
+    fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+def _failure(exc, *, code=None, message=None, retryable=False):
+    """The operator-facing deviation for a task that never produced a run."""
+    return CollectError(
+        code=code or type(exc).__name__,
+        message=message or str(exc) or type(exc).__name__,
+        retryable=retryable,
+    ).model_dump(mode="json")
+
+
+def _failure_document(error):
+    """A ``CollectionResult``-shaped payload for a run that stopped before collecting.
+
+    Sharing the collected shape keeps REST and MCP operators on one contract: the
+    error list is always present, and the absent snapshot simply has no records.
+    """
+    return {
+        "status": "failed",
+        "snapshot_id": None,
+        "previous_snapshot_id": None,
+        "changes": [],
+        "errors": [error],
+        "warnings": [],
+        "coverage": None,
+        "engine": None,
+    }
 
 
 class TaskService:
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, *, provider=None):
         self.store = SnapshotStore(path)
+        # Optional model provider for report synthesis; ``None`` keeps collection
+        # and delivery fully deterministic when no endpoint is configured. The
+        # launchers inject the same object they already hand to session guidance.
+        self.provider = provider
         self.running = {}
         self.scheduler = None
         self.worker = None
@@ -91,11 +176,19 @@ class TaskService:
             ).fetchone()
         if not row:
             raise KeyError(identifier)
+        run = json.loads(row[2]) if row[2] else None
         return {
             "id": row[0],
             "status": row[1],
-            "result": json.loads(row[2]) if row[2] else None,
+            "result": run,
             "error": row[3],
+            # The run contract is hoisted out of ``result`` so REST and MCP
+            # operators read code, url and message without knowing the bundle
+            # layout; a task without a run yet reports empty scope, not stale keys.
+            "errors": list(run.get("errors") or []) if run else [],
+            "warnings": list(run.get("warnings") or []) if run else [],
+            "coverage": run.get("coverage") if run else None,
+            "engine": run.get("engine") if run else None,
         }
 
     def list_tasks(self):
@@ -124,9 +217,22 @@ class TaskService:
                 task.get_loop().call_soon_threadsafe(task.cancel)
 
     def recover(self):
+        failure = _failure_document(
+            _failure(
+                RuntimeError(),
+                code="interrupted",
+                message="Service restarted while the task was running; rerun it explicitly.",
+                retryable=True,
+            )
+        )
         with self.store._connection() as conn:
+            # Interruption is a failure with a code; a task that was cut off
+            # mid-delivery keeps the collection it already stored.
             conn.execute(
-                "UPDATE tasks SET status='failed', error='interrupted' WHERE status='running'"
+                "UPDATE tasks SET status='failed', error='interrupted', "
+                "result=CASE WHEN result IS NULL THEN ? ELSE result END "
+                "WHERE status='running'",
+                (json.dumps(failure),),
             )
 
     async def run(self, identifier):
@@ -192,7 +298,15 @@ class TaskService:
             if self.stopping:
                 raise
         except Exception as exc:  # noqa: BLE001 — isolates an unknown task failure from the worker
-            self.set_status(identifier, "failed", error=type(exc).__name__)
+            # A crashed task answers on the same run contract as a collected one:
+            # the operator reads code plus message instead of a bare class name,
+            # and there is simply no snapshot to reference.
+            self.set_status(
+                identifier,
+                "failed",
+                result=_failure_document(_failure(exc)),
+                error=type(exc).__name__,
+            )
             self.alert("failed")
         finally:
             self.running.pop(identifier, None)
@@ -239,6 +353,29 @@ class TaskService:
             else None
         )
 
+    async def synthesize_claims(self, result):
+        """Evidence-checked model claims for one run; never fatal to delivery.
+
+        Provider configuration is optional and the adapter is imported lazily, so
+        the deterministic collection path carries no model dependency. Any
+        failure here degrades to a delivery warning: analysis is layered on a
+        finished run and never reverses it.
+        """
+        try:
+            from omnicrawler.synthesis import synthesize
+
+            claims, warnings = await synthesize(
+                store=self.store,
+                result=result,
+                provider=(
+                    self.provider if self.provider is not None else provider_from_env()
+                ),
+                limit=12,
+            )
+        except Exception as exc:  # noqa: BLE001 — analysis never reverses a completed run
+            return [], [f"synthesis_failed: {type(exc).__name__}: {exc}"]
+        return list(claims), [str(warning) for warning in warnings]
+
     async def generate_report(self, identifier, *, formats=None):
         import shutil
         from tempfile import TemporaryDirectory
@@ -246,7 +383,7 @@ class TaskService:
         from omnicrawler.report import build_report, deliver
 
         task = self.get(identifier)
-        if not task["result"]:
+        if not task["result"] or not task["result"].get("snapshot_id"):
             raise KeyError("Result unavailable or expired")
         result = task["result"]
         contract = self.delivery_contract(identifier) or {
@@ -255,17 +392,23 @@ class TaskService:
             "formats": ["md", "json"],
         }
         selected = list(dict.fromkeys(contract["formats"] + list(formats or [])))
+        # Synthesis is an enhancement layered on a finished collection: the claims
+        # it returns are evidence-checked, and any failure becomes a delivery
+        # warning so the operator never loses the run that already succeeded.
+        claims, synthesis_warnings = await self.synthesize_claims(result)
         report = build_report(
             self.store,
             result,
             task_type=contract["task_type"],
             schedule_seconds=contract["schedule_seconds"],
+            inferences=claims,
         )
         self.report_root.mkdir(parents=True, exist_ok=True)
         # Render outside the transaction, then validate dependencies and install
         # under the same writer lock as deletion. No stale report is resurrected.
         with TemporaryDirectory(prefix=".pending-", dir=self.report_root) as temporary:
             manifest = await deliver(report, Path(temporary), selected)
+            manifest["warnings"].extend(synthesis_warnings)
             with self.store._connection() as conn:
                 conn.execute("BEGIN IMMEDIATE")
                 row = conn.execute(

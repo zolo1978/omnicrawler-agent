@@ -7,14 +7,19 @@ from mcp.server.fastmcp import FastMCP
 
 from omnicrawler.pipeline import CollectionConfig
 from omnicrawler.provider import provider_from_env
+from omnicrawler.search import search_from_env
 from omnicrawler.service import TaskService, worker_lock
 from omnicrawler.session import SessionStore
 
 
 def build_server(path: Path, allowed_hosts: set[str]):
-    manager = TaskService(path)
+    provider = provider_from_env()
+    manager = TaskService(path, provider=provider)
     sessions = SessionStore(
-        manager, allowed_hosts=allowed_hosts, provider=provider_from_env()
+        manager,
+        allowed_hosts=allowed_hosts,
+        provider=provider,
+        search=search_from_env(),
     )
 
     @asynccontextmanager
@@ -44,6 +49,22 @@ def build_server(path: Path, allowed_hosts: set[str]):
         return sessions.get(session_id)
 
     @server.tool()
+    async def nominate_sources(session_id: str) -> dict:
+        """Nominate candidate sources for the stated goal; a human must accept them.
+
+        Returns the authorized candidates and every rejected candidate, so an
+        over-scoped or unavailable backend stays visible instead of silently
+        shrinking the source list.
+        """
+        value = await sessions.nominate(session_id)
+        nomination = value["nominations"] or {}
+        return {
+            **value,
+            "candidates": nomination.get("candidates", []),
+            "rejected": nomination.get("rejected", []),
+        }
+
+    @server.tool()
     async def preview_session(session_id: str) -> dict:
         """Sample one explicitly authorized source using the existing access policy."""
         return await sessions.preview(session_id)
@@ -70,16 +91,21 @@ def build_server(path: Path, allowed_hosts: set[str]):
 
     @server.tool()
     def task_status(task_id: str) -> dict:
-        """Read task status, errors and completed result metadata."""
+        """Read task status with its run contract: errors, warnings and coverage.
+
+        Errors are objects carrying code, message and the url that failed; a task
+        that never collected still answers on the same shape.
+        """
         return manager.get(task_id)
 
     @server.tool()
     def task_result(task_id: str) -> dict:
         """Read source-traceable structured records for a completed task."""
         task = manager.get(task_id)
-        if not task["result"]:
+        snapshot_id = (task["result"] or {}).get("snapshot_id")
+        if not snapshot_id:
             raise ValueError("Result not available")
-        return manager.store.bundle(task["result"]["snapshot_id"])
+        return manager.store.bundle(snapshot_id)
 
     @server.tool()
     def cancel_task(task_id: str) -> dict:
