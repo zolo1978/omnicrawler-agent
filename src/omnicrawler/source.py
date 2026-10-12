@@ -46,7 +46,7 @@ class SourceConfig(Contract):
     """
 
     kind: str = Field(min_length=1)
-    account: str = Field(min_length=1)
+    account: str = ""
     goal: str = ""
     endpoint: str | None = None
     limit: int = Field(default=20, gt=0, le=200)
@@ -117,7 +117,7 @@ def source_coverage(config: SourceConfig) -> str:
         json.dumps(
             {
                 "kind": config.kind,
-                "account": config.account,
+                "account": config.account or "self",
                 "endpoint": config.endpoint,
                 "limit": config.limit,
                 "fields": config.fields,

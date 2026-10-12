@@ -29,6 +29,7 @@ def mcp():
         "profile_error": None,
         "sse": False,
         "calls": [],
+        "arguments": {},
     }
 
     class Handler(BaseHTTPRequestHandler):
@@ -57,7 +58,8 @@ def mcp():
                 self.send_header("Content-Length", "0")
                 self.end_headers()
                 return
-            if params.get("name") == "user_profile":
+            if params.get("name") in {"user_profile", "get_my_profile"}:
+                state["arguments"][params["name"]] = params.get("arguments")
                 if state["profile_error"]:
                     self.reply(
                         {
@@ -70,20 +72,21 @@ def mcp():
                         }
                     )
                     return
-                payload = {
-                    "code": 0,
-                    "data": {
-                        "notes": [
-                            {
-                                "id": key,
-                                "xsecToken": note["token"],
-                                "noteCard": {"displayTitle": note["title"]},
-                            }
-                            for key, note in state["notes"].items()
-                        ]
-                    },
-                }
+                notes = [
+                    {
+                        "id": key,
+                        "xsecToken": note["token"],
+                        "noteCard": {"displayTitle": note["title"]},
+                    }
+                    for key, note in state["notes"].items()
+                ]
+                payload = (
+                    {"data": {"notes": notes}}
+                    if params.get("name") == "user_profile"
+                    else {"userBasicInfo": {"nickname": "自用账号"}, "feeds": notes}
+                )
             else:
+                state["arguments"]["get_feed_detail"] = params.get("arguments")
                 feed_id = (params.get("arguments") or {}).get("feed_id")
                 note = state["notes"].get(feed_id)
                 if note is None:
@@ -326,6 +329,56 @@ def test_cli_source_command_delivers_a_report(mcp, tmp_path):
     assert report["summary"]["records"] == 2
     text = (report_dir / "report.md").read_text(encoding="utf-8").replace("\\", "")
     assert "external_retrieval" in text
+
+
+def test_own_account_mode_needs_no_user_id_or_token(mcp, tmp_path):
+    """Omitting the account reads the logged-in user's own profile."""
+    origin, state = mcp
+    result, store, _config = run_once(origin, tmp_path, account="")
+
+    assert result.status == "succeeded"
+    records = store.bundle(result.snapshot_id)["records"]
+    assert sorted(record["entity_id"] for record in records) == ["n1", "n2"]
+    assert state["arguments"]["get_my_profile"] == {}
+    assert ("tools/call", "get_my_profile") in state["calls"]
+
+
+def test_explicit_account_uses_user_profile_with_the_scope_token(mcp, tmp_path):
+    origin, state = mcp
+    result, _store, _config = run_once(origin, tmp_path)
+
+    assert result.status == "succeeded"
+    assert state["arguments"]["user_profile"] == {
+        "user_id": "my-account",
+        "xsec_token": "session-token",
+    }
+    assert ("tools/call", "user_profile") in state["calls"]
+
+
+def test_probe_looks_up_the_per_note_token_itself(mcp, tmp_path):
+    """Tokens are per note on this platform, so the operator never handles them."""
+    origin, state = mcp
+    config = configuration(origin, account="")
+    adapter = xhs.adapter_for(config)
+
+    payload = asyncio.run(adapter.probe("n2"))
+
+    assert payload["note"]["title"] == "第二篇"
+    assert state["arguments"]["get_feed_detail"] == {
+        "feed_id": "n2",
+        "xsec_token": "tok-2",
+        "load_all_comments": False,
+    }
+
+
+def test_own_account_mode_never_calls_user_profile(mcp, tmp_path):
+    """Own-account mode has no user id and no scope token to send."""
+    origin, state = mcp
+    run_once(origin, tmp_path, account="")
+    called = [name for _method, name in state["calls"]]
+
+    assert "get_my_profile" in called
+    assert "user_profile" not in called
 
 
 def test_probe_returns_the_raw_tool_payload(mcp, tmp_path):

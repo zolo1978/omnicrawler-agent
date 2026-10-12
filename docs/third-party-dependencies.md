@@ -25,7 +25,7 @@ config/upstreams.json 是研究候选清单，不是已集成依赖清单。Fire
 
 | 适配器 | 上游 | 上游许可 | 接入方式 | 状态 |
 | --- | --- | --- | --- | --- |
-| xhs | xpzouying/xiaohongshu-mcp | Apache-2.0 | 进程外 MCP over HTTP（默认 `http://127.0.0.1:18060/mcp`） | 协议与安全语义已用回环 mock 验证；**未对真实服务验证**（需扫码登录的账号环境） |
+| xhs | xpzouying/xiaohongshu-mcp | Apache-2.0 | 进程外 MCP over HTTP（默认 `http://127.0.0.1:18060/mcp`） | 2026-10-12 已对 v2.5.5（windows-amd64，sha256 校验）真实实例验证：自有账号 26 篇笔记枚举、逐篇详情证据、`limit` 截断与字段缺失告警、连续两次运行 0 变化 |
 
 已评估但**未接入**：NanmiCoder/MediaCrawler（66.7k star，许可为自定义的 NON-COMMERCIAL LEARNING LICENSE 1.1，明文禁止商用与大规模采集，与本项目的 Apache-2.0 定位不兼容）、JoeanAmier/XHS-Downloader（GPL-3.0，链接会传染）。两者仅作研究记录，源码与产物均未纳入。
 

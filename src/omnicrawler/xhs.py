@@ -243,14 +243,25 @@ class XhsMcpAdapter:
             ) from exc
 
     async def identities(self) -> list[dict]:
-        arguments = {"user_id": self.account}
-        if self.scope_token:
-            arguments["xsec_token"] = self.scope_token
-        payload = await self.call_tool("user_profile", arguments)
+        """Enumerate the authorized scope.
+
+        With no account configured this reads the logged-in user's own profile
+        (``get_my_profile``, default tab: own notes), which needs neither a user id
+        nor a session token. An explicit account switches to ``user_profile``.
+        """
+        if self.account:
+            arguments = {"user_id": self.account}
+            if self.scope_token:
+                arguments["xsec_token"] = self.scope_token
+            payload = await self.call_tool("user_profile", arguments)
+            source = f"user_profile({self.account})"
+        else:
+            payload = await self.call_tool("get_my_profile", {})
+            source = "get_my_profile"
         entries, proved_empty = collect_identities(payload)
         if not entries and not proved_empty:
             raise ValueError(
-                "user_profile returned no note carrying an id and token pair; run "
+                f"{source} returned no note carrying an id and token pair; run "
                 "`omnicrawler source --probe <feed_id>` against this deployment to "
                 "see the payload shape"
             )
@@ -277,7 +288,16 @@ class XhsMcpAdapter:
         }
 
     async def probe(self, feed_id: str, token: str | None = None) -> object:
-        """Raw tool payload for one note, so field paths can be confirmed."""
+        """Raw tool payload for one note, so field paths can be confirmed.
+
+        The token is per note rather than per account, so when the caller has not
+        supplied one it is looked up from the account's own enumeration.
+        """
+        if not token:
+            for entry in await self.identities():
+                if entry.get("identity") == feed_id:
+                    token = entry.get("token")
+                    break
         arguments = {"feed_id": feed_id, "load_all_comments": False}
         if token:
             arguments["xsec_token"] = token

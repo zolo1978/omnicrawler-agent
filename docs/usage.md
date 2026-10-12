@@ -40,27 +40,35 @@ discovery 可设置 links/sitemap/rss；seed URL 指向链接页、站点地图�
 
 除受控 HTTP 采集外，也可以把某个外部工具当作**取数来源**：取数交给它，OmniCrawler 只负责证据、快照、变化与报告。首个适配器针对小红书，读取**你自己账号**的笔记与互动数据。
 
+**前提**：本机运行 `xiaohongshu-mcp`（Go 二进制，Apache-2.0）并保持登录态。它的登录属于它自己：扫码登录后凭据落在 `~/.xiaohongshu/cookies.json`（该文件是账号会话凭据，权限收紧、不要提交）。启动时二进制读环境变量 `COOKIES_PATH` 指定的 cookie 文件，未设置时不会读到你的登录态。
+
 ```sh
-# 1. 先启动 xiaohongshu-mcp 并扫码登录（数据由它取，不由 OmniCrawler 取）
-# 2. 用 --probe 确认字段路径：不同部署的返回结构可能不同
-OMNICRAWLER_XHS_SCOPE_TOKEN=<xsec_token> \
-  uv run omnicrawler source source-config.json --probe <feed_id>
-# 3. 采集并出报告
-OMNICRAWLER_XHS_SCOPE_TOKEN=<xsec_token> \
-  uv run omnicrawler source source-config.json --db data/xhs.sqlite \
+# 0. 启动服务（首次会下载内置无头浏览器）
+COOKIES_PATH="$HOME/.xiaohongshu/cookies.json" xiaohongshu-mcp -port :18060
+# 1. 确认登录（也可用 --probe 看某篇笔记的原始返回，用于对齐字段路径）
+uv run omnicrawler source source-config.json --probe <feed_id>
+# 2. 采集并出报告
+uv run omnicrawler source source-config.json --db data/xhs.sqlite \
   --report-dir data/xhs --format md --format json
 ```
 
-配置里的 `fields` 是适配器返回 JSON 的点路径（不是 CSS 选择器）；`tags[]` 会把列表拼接成一个字段：
+`account` 留空即"当前登录账号"，此时用 `get_my_profile` 枚举，**不需要 user_id，也不需要 xsec_token**；填了 `account` 才走 `user_profile`（需要会话令牌，经 `--scope-token` 或 `OMNICRAWLER_XHS_SCOPE_TOKEN` 传入）。
+
+配置里的 `fields` 是适配器返回 JSON 的点路径（不是 CSS 选择器）。2026-10-12 对 v2.5.5 实测的结构：`get_my_profile` 返回 `feeds[]`（每项含 `id`、`xsecToken`、`noteCard`），`get_feed_detail` 返回 `data.note`（含 `title`、`desc`、`time`、`interactInfo.likedCount/collectedCount/commentCount`）：
 
 ```json
-{ "kind": "xhs", "account": "<user_id>", "endpoint": "http://127.0.0.1:18060/mcp", "limit": 20,
-  "fields": { "title": "note.title", "liked": "interactInfo.likedCount", "tags": "tags[]" } }
+{ "kind": "xhs", "account": "", "endpoint": "http://127.0.0.1:18060/mcp", "limit": 30,
+  "fields": { "desc": "data.note.desc", "liked": "data.note.interactInfo.likedCount",
+              "collected": "data.note.interactInfo.collectedCount",
+              "commented": "data.note.interactInfo.commentCount",
+              "published_at": "data.note.time" } }
 ```
 
-环境变量：`OMNICRAWLER_XHS_MCP_URL`（默认 `http://127.0.0.1:18060/mcp`）、`OMNICRAWLER_XHS_SCOPE_TOKEN`（或 `--scope-token`）。
+注意小红书**允许无标题**的笔记（实测 26 篇里有多篇 `title` 为空、`displayTitle` 也为空）。给这类字段配置路径不会出错，但每次运行都会出现 `field_missing` 告警——那是提示"这批数据本来就没有这个字段"，而不是抽取失败。
 
-**边界（务必知情）**：这条路径的取数发生在外部工具内部，因此 OmniCrawler 的域名白名单、robots、DNS 复检、限速与响应预算**都不适用**。每次运行都会带 `external_retrieval` 告警、`engine` 记为 `source:xhs`，报告同样显示；会话令牌只作为请求参数，不写入数据库、快照或报告。
+环境变量：`OMNICRAWLER_XHS_MCP_URL`（默认 `http://127.0.0.1:18060/mcp`）、`OMNICRAWLER_XHS_SCOPE_TOKEN`（或 `--scope-token`，仅 `account` 模式需要）。
+
+**边界（务必知情）**：这条路径的取数发生在外部工具内部，因此 OmniCrawler 的域名白名单、robots、DNS 复检、限速与响应预算**都不适用**。每次运行都会带 `external_retrieval` 告警、`engine` 记为 `source:xhs`，报告同样显示；每篇笔记的 `xsec_token` 只作为请求参数（它本身按笔记发放、会过期），不写入数据库、快照、定位或报告。
 
 安全默认值：范围为空 → `source_empty_scope`；被 `limit` 截断 → `source_scope_truncated`；两者都**不做删除推断**（"工具坏了"与"账号没内容"不能靠猜区分）。枚举失败/未登录 → `source_unavailable` / `source_not_authenticated`，状态 partial。字段全部解析不出 → 该条 `entity_unresolved`；部分解析不出 → `field_missing` 告警，其余字段与变化检测保留。
 
