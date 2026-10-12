@@ -243,13 +243,21 @@ class XhsMcpAdapter:
             ) from exc
 
     async def identities(self) -> list[dict]:
-        """Enumerate the authorized scope.
+        """Enumerate the scope this config declares.
 
-        With no account configured this reads the logged-in user's own profile
-        (``get_my_profile``, default tab: own notes), which needs neither a user id
-        nor a session token. An explicit account switches to ``user_profile``.
+        ``own`` reads the logged-in user's own profile (``get_my_profile``, default
+        tab: own notes), which needs neither a user id nor a session token. An
+        explicit account switches to ``user_profile``. ``search`` instead takes the
+        top notes for a keyword, which is third-party public content and is
+        labelled as such by the caller.
         """
-        if self.account:
+        if self.config.mode == "search":
+            arguments = {"keyword": self.config.keyword}
+            if self.config.filters:
+                arguments["filters"] = self.config.filters
+            payload = await self.call_tool("search_feeds", arguments)
+            source = f"search_feeds({self.config.keyword!r})"
+        elif self.account:
             arguments = {"user_id": self.account}
             if self.scope_token:
                 arguments["xsec_token"] = self.scope_token

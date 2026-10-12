@@ -96,6 +96,25 @@ def test_adapter_for_names_the_available_adapters():
         xhs.adapter_for(base_config(kind="unknown"))
 
 
+def test_search_mode_requires_a_keyword_and_no_account():
+    with pytest.raises(ValueError):
+        base_config(mode="search", account="")
+    with pytest.raises(ValueError):
+        base_config(mode="search", keyword="手串", account="someone")
+    with pytest.raises(ValueError):
+        base_config(mode="own", keyword="手串")
+    assert base_config(mode="search", keyword="手串", account="").limit == 20
+
+
+def test_source_coverage_separates_own_from_search():
+    own = base_config(mode="own")
+    search = base_config(mode="search", keyword="手串", account="")
+    other_keyword = base_config(mode="search", keyword="水晶", account="")
+
+    assert source.source_coverage(own) != source.source_coverage(search)
+    assert source.source_coverage(search) != source.source_coverage(other_keyword)
+
+
 def test_source_coverage_covers_scope_not_data():
     """A newly published note is data, so it must not fork the baseline."""
     assert source.source_coverage(base_config()) == source.source_coverage(

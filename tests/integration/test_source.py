@@ -85,6 +85,17 @@ def mcp():
                     if params.get("name") == "user_profile"
                     else {"userBasicInfo": {"nickname": "自用账号"}, "feeds": notes}
                 )
+            elif params.get("name") == "search_feeds":
+                state["arguments"]["search_feeds"] = params.get("arguments")
+                notes = [
+                    {
+                        "id": key,
+                        "xsecToken": note["token"],
+                        "noteCard": {"displayTitle": note["title"]},
+                    }
+                    for key, note in state["notes"].items()
+                ]
+                payload = {"data": {"items": notes}}
             else:
                 state["arguments"]["get_feed_detail"] = params.get("arguments")
                 feed_id = (params.get("arguments") or {}).get("feed_id")
@@ -379,6 +390,31 @@ def test_own_account_mode_never_calls_user_profile(mcp, tmp_path):
 
     assert "get_my_profile" in called
     assert "user_profile" not in called
+
+
+def test_search_mode_marks_third_party_content(mcp, tmp_path):
+    """Keyword runs read other accounts' notes, and say so on every run."""
+    origin, state = mcp
+    result, store, _config = run_once(
+        origin, tmp_path, mode="search", keyword="NFC 手串", account=""
+    )
+
+    assert result.status == "succeeded"
+    assert [warning.code for warning in result.warnings] == [
+        "external_retrieval",
+        "third_party_content",
+    ]
+    assert state["arguments"]["search_feeds"] == {"keyword": "NFC 手串"}
+    assert "user_profile" not in state["arguments"]
+    assert len(store.bundle(result.snapshot_id)["records"]) == 2
+
+
+def test_own_mode_is_the_default(mcp, tmp_path):
+    origin, state = mcp
+    result, _store, _config = run_once(origin, tmp_path, account="", mode="own")
+
+    assert "third_party_content" not in [w.code for w in result.warnings]
+    assert ("tools/call", "get_my_profile") in state["calls"]
 
 
 def test_probe_returns_the_raw_tool_payload(mcp, tmp_path):

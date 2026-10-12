@@ -18,10 +18,10 @@ account.
 import hashlib
 import json
 from datetime import UTC, datetime
-from typing import Protocol
+from typing import Literal, Protocol
 from urllib.parse import urlsplit
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 from omnicrawler.governance import sanitize
 from omnicrawler.models import CollectError, Contract, Coverage, Evidence, Record
@@ -32,6 +32,16 @@ EXTERNAL_RETRIEVAL = CollectError(
     message=(
         "Retrieved by an external adapter; the HTTP allowlist, robots check, DNS "
         "re-validation and rate limiting were not applied to this run"
+    ),
+)
+
+# A keyword run reads other people's public notes. That is a different posture from
+# own-account monitoring, so it is labelled on every run rather than only in docs.
+THIRD_PARTY = CollectError(
+    code="third_party_content",
+    message=(
+        "Keyword search collected public content authored by other accounts; this is "
+        "not own-account monitoring and the authors are not part of the authorized scope"
     ),
 )
 
@@ -46,11 +56,26 @@ class SourceConfig(Contract):
     """
 
     kind: str = Field(min_length=1)
+    mode: Literal["own", "search"] = "own"
+    keyword: str = ""
     account: str = ""
     goal: str = ""
     endpoint: str | None = None
     limit: int = Field(default=20, gt=0, le=200)
     fields: dict[str, str | list[str]] = Field(min_length=1)
+    filters: dict = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_mode(self):
+        if self.mode == "search" and not self.keyword.strip():
+            raise ValueError("Search mode requires a keyword")
+        if self.mode == "own" and self.keyword.strip():
+            raise ValueError(
+                "keyword belongs to search mode; own-account runs read your own profile"
+            )
+        if self.mode == "search" and self.account:
+            raise ValueError("Search mode reads third-party notes; it takes no account")
+        return self
 
     @field_validator("endpoint")
     @classmethod
@@ -117,9 +142,12 @@ def source_coverage(config: SourceConfig) -> str:
         json.dumps(
             {
                 "kind": config.kind,
+                "mode": config.mode,
+                "keyword": config.keyword.strip(),
                 "account": config.account or "self",
                 "endpoint": config.endpoint,
                 "limit": config.limit,
+                "filters": config.filters,
                 "fields": config.fields,
             },
             sort_keys=True,
@@ -159,6 +187,8 @@ async def collect_from_source(config, store, adapter) -> CollectionResult:
     """One adapter run, recorded with the same evidence and comparison semantics."""
     errors: list[CollectError] = []
     warnings: list[CollectError] = [EXTERNAL_RETRIEVAL]
+    if config.mode == "search":
+        warnings.append(THIRD_PARTY)
     coverage = source_coverage(config)
     previous = store.latest(coverage)
     try:
