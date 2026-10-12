@@ -15,6 +15,7 @@ operator is authorized to read — for the Xiaohongshu adapter, the operator's o
 account.
 """
 
+import asyncio
 import hashlib
 import json
 from datetime import UTC, datetime
@@ -62,6 +63,7 @@ class SourceConfig(Contract):
     goal: str = ""
     endpoint: str | None = None
     limit: int = Field(default=20, gt=0, le=200)
+    delay: float = Field(default=1.0, ge=0, le=60)
     fields: dict[str, str | list[str]] = Field(min_length=1)
     filters: dict = Field(default_factory=dict)
 
@@ -212,8 +214,13 @@ async def collect_from_source(config, store, adapter) -> CollectionResult:
     fetches: list[dict] = []
     unresolved: list[str] = []
     misses = dict.fromkeys(config.fields, 0)
-    for entry in entries[: config.limit]:
+    for position, entry in enumerate(entries[: config.limit]):
         identity = str(entry.get("identity") or "").strip()
+        if position and config.delay:
+            # Pacing the external tool is politeness it cannot do for itself: the
+            # upstream drives a logged-in browser, and hammering it gets the
+            # account throttled rather than the run failing cleanly.
+            await asyncio.sleep(config.delay)
         if not identity:
             errors.append(
                 CollectError(

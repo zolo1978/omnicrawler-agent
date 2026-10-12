@@ -79,12 +79,14 @@ uv run omnicrawler source source-config.json --db data/xhs.sqlite \
 `mode` 留空为 `own`（只读自有账号）。要按关键词做公开内容调研，显式声明 `mode: "search"` 并给 `keyword`；此时 `account` 必须为空（模式决定来源，不允许含糊组合），`filters` 可选（如 `{"sort_by": "最新"}`）。每次运行都会额外带 `third_party_content` 告警，报告里也显示——它不是自有账号监控，作者也不在授权范围内。
 
 ```json
-{ "kind": "xhs", "mode": "search", "keyword": "NFC碰一碰手串", "account": "", "limit": 12,
+{ "kind": "xhs", "mode": "search", "keyword": "NFC碰一碰手串", "account": "", "limit": 12, "delay": 3,
   "endpoint": "http://127.0.0.1:18060/mcp",
   "fields": { "title": "data.note.title", "desc": "data.note.desc", "type": "data.note.type",
               "liked": "data.note.interactInfo.likedCount", "collected": "data.note.interactInfo.collectedCount",
               "commented": "data.note.interactInfo.commentCount", "published_at": "data.note.time" } }
 ```
+
+`delay` 是逐篇取详情之间的间隔（秒，默认 1）。外部工具自己不会节流，而它驱动的是你的登录态浏览器——把频率压下来是唯一能降低被风控概率的手段；实测连续二三十次调用后上游开始超时，加间隔后能继续跑完。
 
 实测边界：`search_feeds` 每次最多返回 20 条，接口不给总数，所以关键词搜索只能得到"某一排序下的前 N 条"，不是市场普查；`limit` 小于结果数会记 `source_scope_truncated` 并判为 partial（不推断删除）。搜索结果自带 `interactInfo`（真实互动数），但正文仍需逐篇 `get_feed_detail`（约 9 秒/篇，浏览器驱动）。
 

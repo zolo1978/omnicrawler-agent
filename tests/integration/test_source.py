@@ -165,6 +165,7 @@ def configuration(origin, **overrides):
         "account": "my-account",
         "endpoint": origin + "/mcp",
         "limit": 10,
+        "delay": 0,
         "fields": {
             "title": "note.title",
             "liked": "interactInfo.likedCount",
@@ -301,6 +302,7 @@ def test_cli_source_command_delivers_a_report(mcp, tmp_path):
                 "account": "my-account",
                 "endpoint": origin + "/mcp",
                 "limit": 10,
+                "delay": 0,
                 "fields": {"title": "note.title", "liked": "interactInfo.likedCount"},
             },
             ensure_ascii=False,
@@ -415,6 +417,44 @@ def test_own_mode_is_the_default(mcp, tmp_path):
 
     assert "third_party_content" not in [w.code for w in result.warnings]
     assert ("tools/call", "get_my_profile") in state["calls"]
+
+
+def test_source_paces_between_notes(monkeypatch, tmp_path):
+    """The external tool cannot pace itself; the run does it between notes."""
+    slept = []
+
+    async def fake_sleep(seconds):
+        slept.append(seconds)
+
+    class Adapter:
+        name = "fake"
+
+        async def identities(self):
+            return [
+                {"identity": "a", "token": "t"},
+                {"identity": "b", "token": "t"},
+                {"identity": "c", "token": "t"},
+            ]
+
+        async def observe(self, entry):
+            url = f"https://example.com/{entry['identity']}"
+            return {
+                "url": url,
+                "values": {"price": "1"},
+                "provenance": {"price": {"url": url, "locator": "x#price"}},
+            }
+
+    monkeypatch.setattr(source.asyncio, "sleep", fake_sleep)
+    config = source.SourceConfig(
+        kind="fake", endpoint="http://127.0.0.1:1/mcp", fields={"price": "x"}, delay=2.0
+    )
+    result = asyncio.run(
+        source.collect_from_source(config, SnapshotStore(tmp_path / "p.db"), Adapter())
+    )
+
+    assert result.status == "succeeded"
+    # Between notes only: nothing before the first or after the last.
+    assert slept == [2.0, 2.0]
 
 
 def test_probe_returns_the_raw_tool_payload(mcp, tmp_path):
