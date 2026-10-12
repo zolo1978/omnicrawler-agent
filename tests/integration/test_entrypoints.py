@@ -33,10 +33,56 @@ def local_config(origin, **overrides):
     return config
 
 
-def write_config(tmp_path, config):
+def write_config(tmp_path, config, *, encoding="utf-8"):
     path = tmp_path / "config.json"
-    path.write_text(json.dumps(config))
+    # ensure_ascii=False keeps a real non-ASCII goal in the file, which is what a
+    # locale-dependent read would corrupt or reject.
+    path.write_text(json.dumps(config, ensure_ascii=False), encoding=encoding)
     return path
+
+
+def test_cli_reads_a_utf8_config_under_a_hostile_locale(site, tmp_path):
+    """A non-ASCII goal must survive whatever codec the locale hands the process.
+
+    Reading the config or printing the result with the locale codec mangles the
+    goal on a GBK/ASCII host and raises where the bytes are not representable.
+    """
+    origin, _state = site
+    goal = "监控价格与库存：中文目标"
+    path = write_config(tmp_path, local_config(origin, goal=goal))
+    report_dir = tmp_path / "reports"
+    environment = {
+        **os.environ,
+        "PYTHONUTF8": "0",
+        "PYTHONCOERCECLOCALE": "0",
+        "LC_ALL": "C",
+        "LANG": "C",
+    }
+    environment.pop("PYTHONIOENCODING", None)
+    process = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "omnicrawler",
+            "collect",
+            str(path),
+            "--db",
+            str(tmp_path / "db.sqlite"),
+            "--report-dir",
+            str(report_dir),
+            "--format",
+            "json",
+        ],
+        check=False,
+        capture_output=True,
+        env=environment,
+        timeout=60,
+    )
+    assert process.returncode == 0, process.stderr.decode("utf-8", "replace")
+    payload = json.loads(process.stdout.decode("utf-8"))
+    assert payload["status"] == "succeeded"
+    report = json.loads((report_dir / "report.json").read_text(encoding="utf-8"))
+    assert report["goal"] == goal
 
 
 def test_module_cli_is_executable():

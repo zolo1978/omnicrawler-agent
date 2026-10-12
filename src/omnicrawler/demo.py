@@ -69,7 +69,7 @@ async def run_demo(output: Path) -> dict:
         "runs": runs,
     }
     (output / "report.json").write_text(
-        json.dumps(report, ensure_ascii=False, indent=2) + "\n"
+        json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
     for index, run in enumerate(runs, 1):
         from omnicrawler.report import build_report, deliver, render_markdown
@@ -82,10 +82,11 @@ async def run_demo(output: Path) -> dict:
         )
         (output / f"snapshot-{index}.json").write_text(
             json.dumps(store.bundle(run["snapshot_id"]), ensure_ascii=False, indent=2)
-            + "\n"
+            + "\n",
+            encoding="utf-8",
         )
     canonical.facts.append(
         "本地授权演示连续采集三次，变化数量为 0 / 2 / 1；机器执行记录见 report.json，逐次规范报告见 reports/run-1 至 run-3。"
     )
-    (output / "report.md").write_text(render_markdown(canonical))
+    (output / "report.md").write_text(render_markdown(canonical), encoding="utf-8")
     return report

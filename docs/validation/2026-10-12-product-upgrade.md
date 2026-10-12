@@ -6,8 +6,8 @@
 
 | 指标 | 基线 `bae2fbb` | 本次 |
 | --- | --- | --- |
-| 全量测试（Windows / Python 3.12 / 含 crawl4ai 与 Chromium） | 100 passed，14 failed | **200 passed，0 failed，0 skipped** |
-| 测试用例数 | 114 | 200 |
+| 全量测试（Windows / Python 3.12 / 含 crawl4ai 与 Chromium） | 100 passed，14 failed | **201 passed，0 failed，0 skipped** |
+| 测试用例数 | 114 | 201 |
 | Windows 可用性 | REST/MCP/guide 因 `fcntl` 整体不可用 | 全入口可用（跨平台 worker 锁） |
 | PDF 交付 | Windows 下必降级（只找 macOS/Linux 字体根） | 正常交付（补 Windows 字体根与家族） |
 | 报告"推断"分区 | 恒为空数组，章节标题照常渲染 | 无后端时显式标注未启用；有后端时均为带证据引用 |
@@ -18,7 +18,7 @@
 ```sh
 uv sync --locked --extra crawl4ai --python 3.12
 PLAYWRIGHT_BROWSERS_PATH="$PWD/.browser-cache" uv run --extra crawl4ai playwright install chromium
-uv run --extra crawl4ai pytest -q     # 200 passed in 79.20s
+uv run --extra crawl4ai pytest -q     # 201 passed in 81.56s
 uv run --extra crawl4ai ruff check src tests tools          # All checks passed
 uv run --extra crawl4ai ruff format --check src tests tools  # 46 files already formatted
 uv build                                                     # sdist + wheel 均成功
@@ -45,6 +45,9 @@ uv build                                                     # sdist + wheel 均
 | F2 | 未声明字符集的响应按 `utf-8 + replace` 解码，GBK 页面被替换为 U+FFFD 后当作字段值与证据存入，且不报错 | 改为按 header → BOM → `<meta charset>` → UTF-8 顺序解码；仍失败时 `text_decoding_lossy` 警告。原先记录该缺陷的语料测试按注释约定**翻转**为断言正确解码 |
 | F3 | 语料工具 `--refresh` 实为空操作（幂等守卫先返回） | 由语料 agent 修复并验证重录幂等 |
 | F4 | 新发现：`chromium_available()` 检查 Playwright 默认缓存，而采集器默认用仓库内 `.browser-cache`，导致按 README 安装浏览器后浏览器用例仍被静默跳过 | 检测与采集器路径对齐；本机浏览器用例由"跳过"变为真实执行并通过 |
+| F5 | 真实站点使用中发现：`cli.py` 用**区域编码**（GBK/ASCII 代码页）读取配置与写出 demo 产物。中文 goal 的 UTF-8 配置在非 UTF-8 区域下会报 `UnicodeDecodeError` 或静默变成乱码；CLI 自身 stdout 同样受区域编码限制 | 配置文件按 UTF-8 读取、demo 产物按 UTF-8 写出、CLI stdout/stderr 显式 UTF-8；新增"敌意区域设置"子进程回归测试（`PYTHONUTF8=0 LC_ALL=C`），断言中文 goal 原样进入报告 |
+| F6 | 真实站点使用中发现：`collect --report-dir` 不调用综合层，因此**配置了 provider 也会得到"推断未启用"的报告**（只有引导/服务路径会综合），属于典型的静默降级 | 该路径改为与引导任务同一交付契约，并补文档说明 |
+| F7 | 真实站点使用中发现：`collect --report-dir` 把运行结果与交付清单**两个 JSON 文档拼接**输出，任何机器消费者 `json.loads(stdout)` 直接失败 | 合并为单个文档（交付清单并入 `delivery` 键），文档同步更新 |
 
 ## 行为与契约变化（升级须知）
 
@@ -58,6 +61,8 @@ uv build                                                     # sdist + wheel 均
 8. 原文留存是显式选项，**改变了原先"不持久化网页原文"的口径**：`--store-raw-html` 或 `store_raw_html=true` 才留存，且随快照/来源删除一并清理。
 9. `planner.plan_with_provider` 删除（零调用点、一次性产出完整配置的路径不可核验）；模型能力收敛到"对已抓取页面提选择器提案"与"证据约束推断"两处。
 10. 服务端不再限制在 macOS/Linux。
+11. CLI 文件 I/O 固定 UTF-8：配置按 UTF-8 读取、demo 产物按 UTF-8 写出、stdout/stderr 显式 UTF-8。此前依赖区域编码，在 GBK/ASCII 代码页下会报错或静默乱码。
+12. `collect --report-dir` 现在与引导任务走同一交付契约（配置了 provider 就生成受证据约束的推断），并只向 stdout 输出**单个** JSON 文档（交付清单并入 `delivery` 键）。
 
 ## 未验证与限制
 
@@ -78,7 +83,16 @@ uv build                                                     # sdist + wheel 均
 | 站点改版存活率 | 单字段换类名 → 该页 0 记录 | 字段失效降级为 warning，其余字段与变更检测保留 |
 | 真实页面覆盖 | 0 个真实页面 | 12 个真实页面 + 8 个脏数据变体，离线可复现 |
 | 首次提出来源 | 必须自带 URL | 可提名（白名单 + 人工采纳后生效） |
-| 跨平台 | Windows 14 项失败、服务不可用 | 200 项全通过 |
+| 跨平台 | Windows 14 项失败、服务不可用 | 201 项全通过 |
+
+## 真实站点使用验证（非 fixture）
+
+用真实授权公开页面走一遍产品路径，验证"能不能正常用"：
+
+1. `collect` 抓 `https://docs.python.org/3/py-modindex.html`：状态 `succeeded`，**319 条记录**，每条含 url + 定位 + 片段 + 时间；报告写入 md/json，覆盖率显示 计划 1 / 实际 1 / 完整。
+2. 同一配置第二次运行：走同一 coverage 的基线比较，`changes` 为空（页面未变），`previous_snapshot_id` 指向上一次。
+3. `replay` 回放该快照的留存原文：exit 0，原文写 stdout、`url captured_at` 写 stderr；未留存的 URL exit 3 并给出原因。
+4. 端到端综合验证（本地回环 mock 的 OpenAI 兼容端点）：模型收到 50 条记录 + 覆盖率摘要 + 已存在的 (url, 定位) 白名单；返回两条推断，一条引用真实定位、一条引用虚构定位。报告只渲染真实那条，并附完整来源依据；**虚构那条在报告中不存在**。这条链路此前在真实数据上从未跑过。
 
 ## 后续建议
 

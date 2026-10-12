@@ -20,7 +20,9 @@
 
 复制 examples/collection.json，按获准网站调整 URLs、域名白名单、CSS item_selector、稳定实体 ID 属性和字段选择器。该示例域名只是占位符，没有产品内容，不应直接当成功案例运行。
 
-执行 `uv run --extra crawl4ai omnicrawler collect 配置.json --db data/omnicrawler.sqlite`。CLI JSON 输出就是本次运行的运行契约：任务状态、前后快照 ID、变化、`errors`（每个错误含 code、message、url、retryable）、`warnings`、`coverage`（planned/fetched/truncated/complete）与选定的 `engine`；partial/blocked 返回退出码 2。无字段匹配不会误报全量删除。明确允许空目录时设置 empty_selector，只有匹配该空态标记才认为空目录采集完整。
+执行 `uv run --extra crawl4ai omnicrawler collect 配置.json --db data/omnicrawler.sqlite`。CLI JSON 输出就是本次运行的运行契约：任务状态、前后快照 ID、变化、`errors`（每个错误含 code、message、url、retryable）、`warnings`、`coverage`（planned/fetched/truncated/complete）与选定的 `engine`；partial/blocked 返回退出码 2。stdout 始终是**单个** JSON 文档：加 `--report-dir` 时交付结果并入同一文档的 `delivery` 键（含各格式文件路径与交付警告），不会再拼接第二份文档。配置文件按 UTF-8 读取，CLI 输出按 UTF-8 写出，因此中文 goal 在非 UTF-8 区域（例如 GBK/ASCII 代码页）下不会被改写或拒绝。无字段匹配不会误报全量删除。明确允许空目录时设置 empty_selector，只有匹配该空态标记才认为空目录采集完整。
+
+`collect --report-dir` 与引导任务走同一交付契约：配置了 `OMNICRAWLER_PROVIDER_URL`/`_MODEL` 时同样生成受证据约束的推断并写入报告，未配置时报告明确标注推断未启用。
 
 需要复看页面原文时，使用 `--store-raw-html`（或在配置里设置 `store_raw_html: true`）保留本次抓取的原始 HTML，然后执行 `uv run omnicrawler replay <snapshot_id> <url> --db data/omnicrawler.sqlite`。`replay` 通过 `store.raw_for_fetch(snapshot_id, url)` 找到该次 fetch 的留存文档并把原文写到 stdout（URL 与 captured_at 写到 stderr，便于重定向），只读本地数据库，不重新访问网络。原文按内容哈希去重，随最后一个引用它的快照被删除而清理（`cleanup` 默认 90 天）；快照没有留存原文（未开启该选项、url 不匹配、已被清理）时 `replay` 打印可读说明并返回退出码 3，stdout 保持为空。留存原文会保存完整页面文本，是对早期“永不落盘页面正文”立场的明确改变，隐私与备份处置见下文“留存、隐私及运维”。
 

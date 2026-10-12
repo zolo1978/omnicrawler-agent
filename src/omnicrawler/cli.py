@@ -11,7 +11,22 @@ from omnicrawler.pipeline import CollectionConfig, collect
 from omnicrawler.storage import SnapshotStore
 
 
+def use_utf8_streams():
+    """Emit UTF-8 on stdout/stderr regardless of the locale.
+
+    The CLI's data is UTF-8 end to end (configs, reports, JSON output), so a
+    locale-encoded pipe would either mangle it or raise on a character the codec
+    cannot represent. On a real Windows console Python writes through the console
+    API, so this only changes what a pipe or redirect receives.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8")
+
+
 def main():
+    use_utf8_streams()
     parser = argparse.ArgumentParser(prog="omnicrawler")
     commands = parser.add_subparsers(dest="command", required=True)
     run = commands.add_parser("collect")
@@ -48,32 +63,40 @@ def main():
     guide.add_argument("--session-id")
     args = parser.parse_args()
     if args.command == "collect":
-        config = CollectionConfig.model_validate_json(args.config.read_text())
+        config = CollectionConfig.model_validate_json(
+            args.config.read_text(encoding="utf-8")
+        )
         if args.store_raw_html:
             # Retention is opt-in per run: the flag overrides the config file so
             # the same plan can be replayed without editing and re-committing it.
             config = config.model_copy(update={"store_raw_html": True})
         result = asyncio.run(collect(config, SnapshotStore(args.db)))
-        print(result.model_dump_json(indent=2))
+        payload = result.model_dump(mode="json")
         if args.report_dir:
+            from omnicrawler.provider import provider_from_env
             from omnicrawler.report import build_report, deliver
+            from omnicrawler.synthesis import synthesize
 
-            report = build_report(
-                SnapshotStore(args.db), result.model_dump(mode="json")
+            store = SnapshotStore(args.db)
+            # Same delivery contract as a guided run: a configured provider is used
+            # here too, so `collect --report-dir` cannot hand back a report whose
+            # inference section says "not enabled" while one is configured.
+            claims, synthesis_warnings = asyncio.run(
+                synthesize(store=store, result=payload, provider=provider_from_env())
             )
-            print(
-                json.dumps(
-                    asyncio.run(
-                        deliver(
-                            report,
-                            args.report_dir,
-                            args.format or ["md", "docx", "pdf", "json"],
-                        )
-                    ),
-                    ensure_ascii=False,
-                    indent=2,
+            report = build_report(store, payload, inferences=claims)
+            manifest = asyncio.run(
+                deliver(
+                    report,
+                    args.report_dir,
+                    args.format or ["md", "docx", "pdf", "json"],
                 )
             )
+            manifest["warnings"].extend(str(warning) for warning in synthesis_warnings)
+            # One JSON document on stdout, so a consumer never has to split
+            # concatenated documents to find the run result.
+            payload["delivery"] = manifest
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
         if result.status != "succeeded":
             raise SystemExit(2)
     elif args.command == "demo":
